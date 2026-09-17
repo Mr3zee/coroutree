@@ -62,6 +62,7 @@ fun runUnderAgent(
     runName: String = mainClass.substringAfterLast('.'),
     timeoutSeconds: Long = 120,
     monitorProbeAsAgentPath: Boolean = true,
+    programArgs: List<String> = emptyList(),
 ): AgentRun {
     val runDir = File(TestEnvironment.workDir, runName).apply {
         deleteRecursively()
@@ -76,7 +77,7 @@ fun runUnderAgent(
         "-Dcoroutree.debug=true",
         "-cp", classpath,
         mainClass,
-    )
+    ) + programArgs
     val outputFile = File(runDir, "output.txt")
     val process = ProcessBuilder(command)
         .directory(runDir)

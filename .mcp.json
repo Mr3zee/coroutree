@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "gradle": {
+      "type": "stdio",
+      "command": "jbang",
+      "args": [
+        "run",
+        "--quiet",
+        "--fresh",
+        "gradle-mcp@rnett"
+      ],
+      "env": {}
+    }
+  }
+}

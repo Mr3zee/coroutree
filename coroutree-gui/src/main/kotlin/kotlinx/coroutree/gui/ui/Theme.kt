@@ -15,8 +15,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutree.gui.view.graph.EdgeKind
 import kotlinx.coroutree.model.EventKind
-import kotlinx.coroutree.model.NodeKind
 import kotlinx.coroutree.model.NodeState
 
 @Immutable
@@ -43,13 +43,15 @@ data class Palette(
     val finished: Color,
     val failed: Color,
     val cancelled: Color,
-    // node kinds
-    val thread: Color,
-    val coroutine: Color,
-    val scope: Color,
     val contextChange: Color,
-    val task: Color,
-    val pool: Color,
+    // the graph: its background, structural edges, and one colour per kind of cross-link (each also has a dash pattern
+    // of its own). Node kinds have no colours: a box is coloured by its state and nothing else (DESIGN §6.1).
+    val canvas: Color,
+    val edge: Color,
+    val launchedFrom: Color,
+    val cancels: Color,
+    val interrupts: Color,
+    val runsOn: Color,
 ) {
     fun of(state: NodeState): Color = when (state) {
         NodeState.ACTIVE -> active
@@ -62,14 +64,11 @@ data class Palette(
         NodeState.UNSPECIFIED -> textDim
     }
 
-    fun of(kind: NodeKind): Color = when (kind) {
-        NodeKind.THREAD -> thread
-        NodeKind.COROUTINE -> coroutine
-        NodeKind.SCOPE -> scope
-        NodeKind.CONTEXT_CHANGE -> contextChange
-        NodeKind.TASK -> task
-        NodeKind.POOL -> pool
-        NodeKind.UNSPECIFIED -> textDim
+    fun of(kind: EdgeKind): Color = when (kind) {
+        EdgeKind.LAUNCHED_FROM -> launchedFrom
+        EdgeKind.CANCELS -> cancels
+        EdgeKind.INTERRUPTS -> interrupts
+        EdgeKind.RUNS_ON -> runsOn
     }
 
     /** Events are tinted by what they are about, in the colour of the state they lead to. */
@@ -106,12 +105,13 @@ val LightPalette = Palette(
     finished = Color(0xFF6E7681),
     failed = Color(0xFFCF222E),
     cancelled = Color(0xFF7D5A1E),
-    thread = Color(0xFF0E7C86),
-    coroutine = Color(0xFF2F6FDE),
-    scope = Color(0xFF8250DF),
     contextChange = Color(0xFFB0620E),
-    task = Color(0xFF1A7F37),
-    pool = Color(0xFF6E7681),
+    canvas = Color(0xFFFBFBFC),
+    edge = Color(0xFF8C959F),
+    launchedFrom = Color(0xFF2F6FDE),
+    cancels = Color(0xFF8250DF),
+    interrupts = Color(0xFFBC4C00),
+    runsOn = Color(0xFF0E7C86),
 )
 
 val DarkPalette = Palette(
@@ -135,12 +135,13 @@ val DarkPalette = Palette(
     finished = Color(0xFF8B9099),
     failed = Color(0xFFF47067),
     cancelled = Color(0xFFC9A561),
-    thread = Color(0xFF4DB6BF),
-    coroutine = Color(0xFF6C9BF5),
-    scope = Color(0xFFB392F0),
     contextChange = Color(0xFFE3A75A),
-    task = Color(0xFF5FB865),
-    pool = Color(0xFF8B9099),
+    canvas = Color(0xFF1F2023),
+    edge = Color(0xFF747A84),
+    launchedFrom = Color(0xFF6C9BF5),
+    cancels = Color(0xFFB392F0),
+    interrupts = Color(0xFFF0883E),
+    runsOn = Color(0xFF4DB6BF),
 )
 
 private val LocalPalette = staticCompositionLocalOf { LightPalette }

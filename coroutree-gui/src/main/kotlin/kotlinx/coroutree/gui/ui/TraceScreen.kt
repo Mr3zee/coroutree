@@ -60,8 +60,8 @@ fun TraceScreen(
 
         VerticalSplitPane(splitPaneState = rememberSplitPaneState(0.64f)) {
             first(minSize = 120.dp) {
-                HorizontalSplitPane(splitPaneState = rememberSplitPaneState(0.62f)) {
-                    first(minSize = 240.dp) { TreePane(viewModel) }
+                HorizontalSplitPane(splitPaneState = rememberSplitPaneState(0.68f)) {
+                    first(minSize = 240.dp) { GraphPane(viewModel, onOpenFrame) }
                     second(minSize = 220.dp) { DetailsPane(viewModel, onOpenFrame) }
                     paneSplitter(vertical = false)
                 }

@@ -30,6 +30,17 @@ public val NodeSnapshot.title: String
         return if (info.name.isEmpty()) what else "$what \"${info.name}\""
     }
 
+/** `launches`, `cancels`, `interrupts`: what the node a cross-link starts at does to the one it points to. */
+public val CrossLink.Kind.verb: String
+    get() = when (this) {
+        CrossLink.Kind.LAUNCHED_FROM -> "launches"
+        CrossLink.Kind.CANCELS -> "cancels"
+        CrossLink.Kind.INTERRUPTS -> "interrupts"
+    }
+
+/** The same for the link from a coroutine to the thread it is running on, which is a property of the node, not a [CrossLink]. */
+public const val RUNS_ON_VERB: String = "runs on"
+
 /** `Main.kt:12`, or an empty string when the frame carries no file name. */
 public val StackFrameDef.shortLocation: String
     get() = when {

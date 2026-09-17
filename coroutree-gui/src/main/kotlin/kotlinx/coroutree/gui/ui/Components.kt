@@ -1,5 +1,6 @@
 package kotlinx.coroutree.gui.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.hoverable
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -22,7 +24,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.TextStyle
@@ -45,23 +54,49 @@ fun Label(
     BasicText(text, modifier, style.copy(color = color), maxLines = maxLines, overflow = TextOverflow.Ellipsis, softWrap = maxLines > 1)
 }
 
+/**
+ * The kind of a node as a pictogram, in the colour of the text around it: kind is never encoded in colour, which
+ * belongs to the state (DESIGN §6.1). Threads are strands, a coroutine is a loop, a scope is a frame around things,
+ * a context change is a swap, a task is a play button, a pool is a grid.
+ */
 @Composable
-fun KindGlyph(kind: NodeKind, dimmed: Boolean = false, modifier: Modifier = Modifier) {
-    val letter = when (kind) {
-        NodeKind.THREAD -> "T"
-        NodeKind.COROUTINE -> "C"
-        NodeKind.SCOPE -> "S"
-        NodeKind.CONTEXT_CHANGE -> "X"
-        NodeKind.TASK -> "K"
-        NodeKind.POOL -> "P"
-        NodeKind.UNSPECIFIED -> "?"
-    }
-    val color = palette.of(kind).copy(alpha = if (dimmed) 0.55f else 1f)
-    Box(
-        modifier.size(16.dp).clip(RoundedCornerShape(4.dp)).background(color.copy(alpha = color.alpha * 0.18f)).border(1.dp, color.copy(alpha = color.alpha * 0.55f), RoundedCornerShape(4.dp)),
-        contentAlignment = Alignment.Center,
-    ) {
-        BasicText(letter, style = TextStyle(color = color, fontSize = 10.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold))
+fun KindIcon(kind: NodeKind, modifier: Modifier = Modifier, color: Color = palette.text) {
+    Canvas(modifier.size(14.dp)) {
+        val s = size.minDimension
+        val stroke = Stroke(width = s * 0.11f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        fun line(x1: Float, y1: Float, x2: Float, y2: Float) = drawLine(color, Offset(x1 * s, y1 * s), Offset(x2 * s, y2 * s), stroke.width, StrokeCap.Round)
+        when (kind) {
+            NodeKind.THREAD -> for (x in listOf(0.25f, 0.5f, 0.75f)) line(x, 0.12f, x, 0.88f)
+            NodeKind.COROUTINE -> {
+                drawArc(color, startAngle = -20f, sweepAngle = 290f, useCenter = false, topLeft = Offset(s * 0.15f, s * 0.15f), size = Size(s * 0.7f, s * 0.7f), style = stroke)
+                line(0.85f, 0.4f, 0.85f, 0.08f)
+                line(0.85f, 0.4f, 0.55f, 0.36f)
+            }
+            NodeKind.SCOPE -> {
+                drawRoundRect(color, Offset(s * 0.1f, s * 0.14f), Size(s * 0.8f, s * 0.72f), CornerRadius(s * 0.18f), stroke)
+                drawCircle(color, s * 0.09f, Offset(s * 0.36f, s * 0.5f))
+                drawCircle(color, s * 0.09f, Offset(s * 0.64f, s * 0.5f))
+            }
+            NodeKind.CONTEXT_CHANGE -> {
+                line(0.1f, 0.33f, 0.9f, 0.33f)
+                line(0.9f, 0.33f, 0.68f, 0.13f)
+                line(0.9f, 0.67f, 0.1f, 0.67f)
+                line(0.1f, 0.67f, 0.32f, 0.87f)
+            }
+            NodeKind.TASK -> drawPath(
+                Path().apply {
+                    moveTo(s * 0.24f, s * 0.12f)
+                    lineTo(s * 0.86f, s * 0.5f)
+                    lineTo(s * 0.24f, s * 0.88f)
+                    close()
+                },
+                color,
+            )
+            NodeKind.POOL -> for (x in listOf(0.12f, 0.56f)) for (y in listOf(0.12f, 0.56f)) {
+                drawRoundRect(color, Offset(s * x, s * y), Size(s * 0.32f, s * 0.32f), CornerRadius(s * 0.06f))
+            }
+            NodeKind.UNSPECIFIED -> drawCircle(color, s * 0.16f, center, style = stroke)
+        }
     }
 }
 
@@ -122,3 +157,11 @@ fun Modifier.rowBackground(selected: Boolean, related: Boolean = false): Modifie
 }
 
 fun Modifier.handCursor(): Modifier = pointerHoverIcon(PointerIcon.Hand)
+
+/** Scrolls only when the item is not already fully in view, so clicking around does not make the list jump. */
+suspend fun LazyListState.revealItem(index: Int) {
+    if (index < 0) return
+    val visible = layoutInfo.visibleItemsInfo
+    val fullyVisible = visible.any { it.index == index && it.offset >= 0 && it.offset + it.size <= layoutInfo.viewportEndOffset }
+    if (!fullyVisible) scrollToItem((index - 3).coerceAtLeast(0))
+}

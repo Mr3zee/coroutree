@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutree.gui.view.Formatting
 import kotlinx.coroutree.gui.view.TraceViewModel
+import kotlinx.coroutree.gui.view.graphTitle
 import kotlinx.coroutree.model.BlockReason
 import kotlinx.coroutree.model.ContextElementKind
 import kotlinx.coroutree.model.Event
@@ -125,8 +126,8 @@ private fun LazyListScope.nodeDetails(snapshot: TraceSnapshot, node: NodeSnapsho
     val info = node.info
     item {
         Row(Modifier.padding(start = 12.dp, end = 16.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            KindGlyph(info.kind)
-            Label(if (node.placeholder) "node #${node.id}" else node.title, Modifier.weight(1f, fill = false), Type.title.copy(fontFamily = Type.code.fontFamily))
+            KindIcon(info.kind)
+            Label(node.graphTitle, Modifier.weight(1f, fill = false), Type.title.copy(fontFamily = Type.code.fontFamily))
             StateBadge(node.state)
         }
     }
@@ -244,12 +245,12 @@ private fun Properties(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun Property(name: String, value: String, code: Boolean = false, maxLines: Int = 2, onClick: (() -> Unit)? = null) {
+private fun Property(name: String, value: String, code: Boolean = false, maxLines: Int = 2, tag: String? = null, onClick: (() -> Unit)? = null) {
     Row(verticalAlignment = Alignment.Top) {
         Label(name, Modifier.width(LABEL_WIDTH).padding(end = 8.dp), color = palette.textDim)
         Label(
             value,
-            Modifier.weight(1f).then(if (onClick != null) Modifier.handCursor().clickable(onClick = onClick) else Modifier),
+            Modifier.weight(1f).then(if (onClick != null) Modifier.handCursor().clickable(onClick = onClick) else Modifier).then(if (tag != null) Modifier.testTag(tag) else Modifier),
             style = if (code) Type.code else Type.body,
             color = if (onClick != null) palette.accent else palette.text,
             maxLines = maxLines,
@@ -259,5 +260,5 @@ private fun Property(name: String, value: String, code: Boolean = false, maxLine
 
 @Composable
 private fun NodeProperty(name: String, snapshot: TraceSnapshot, id: Long, onNavigate: (Long) -> Unit) {
-    Property(name, snapshot.node(id)?.title ?: "node #$id", code = true, onClick = { onNavigate(id) })
+    Property(name, snapshot.node(id)?.title ?: "node #$id", code = true, tag = "ref-$name", onClick = { onNavigate(id) })
 }

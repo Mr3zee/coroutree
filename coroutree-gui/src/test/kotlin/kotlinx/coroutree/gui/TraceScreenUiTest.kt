@@ -1,7 +1,10 @@
 package kotlinx.coroutree.gui
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -17,13 +20,14 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+/** The three panes together: what a click in one of them does to the others. The graph pane on its own is GraphPaneUiTest. */
 @OptIn(ExperimentalTestApi::class)
 class TraceScreenUiTest {
     private val snapshot = demoSnapshot()
     private val viewModel = TraceViewModel().also { it.snapshot = snapshot }
     private val opened = mutableListOf<StackFrameDef>()
 
-    private fun test(block: androidx.compose.ui.test.ComposeUiTest.() -> Unit) = runComposeUiTest {
+    private fun test(block: ComposeUiTest.() -> Unit) = runComposeUiTest {
         setContent {
             CoroutreeTheme(dark = false) {
                 TraceScreen(viewModel, "demo", FeedStatus.RECORDED, failure = null, onOpenFrame = { opened += it }, onClose = {})
@@ -45,12 +49,13 @@ class TraceScreenUiTest {
     }
 
     @Test
-    fun clickingAnEventSelectsItsNode() = test {
+    fun clickingAnEventSelectsItsNodeInTheGraph() = test {
         val first = snapshot.events.first()
         onNodeWithTag("event-${first.seq}").performClick()
         waitForIdle()
         assertEquals(first.seq, viewModel.selectedEventSeq)
         assertEquals(first.nodeId, viewModel.selectedNodeId)
+        onNodeWithTag("node-${first.nodeId}").assertIsSelected()
     }
 
     @Test
@@ -65,15 +70,32 @@ class TraceScreenUiTest {
     }
 
     @Test
-    fun collapsingHidesTheSubtree() = test {
-        val scope = snapshot.constructed("coroutineScope")
+    fun followingAReferenceInTheDetailsPaneSelectsThatNodeInTheGraph() = test {
         val payment = snapshot.named("payment")
-        onNodeWithTag("toggle-${scope.id}").performClick()
+        val scope = snapshot.constructed("coroutineScope")
+        onNodeWithTag("node-${payment.id}").performClick()
         waitForIdle()
-        onAllNodesWithTag("node-${payment.id}").assertCountEquals(0)
-        onNodeWithTag("toggle-${scope.id}").performClick()
+        onNodeWithTag("ref-Parent").performClick()
         waitForIdle()
-        onAllNodesWithTag("node-${payment.id}").assertCountEquals(1)
+        assertEquals(scope.id, viewModel.selectedNodeId)
+        onNodeWithTag("node-${scope.id}").assertIsSelected()
+    }
+
+    @Test
+    fun anEventInsideTheLibraryBringsTheLibraryIntoTheGraph() = test {
+        val selector = snapshot.named("http-selector")
+        onAllNodesWithTag("node-${selector.id}").assertCountEquals(0)
+        viewModel.selectEvent(selector.events.first { it.kind == EventKind.SUSPENDED })
+        waitForIdle()
+        onNodeWithTag("node-${selector.id}").assertIsSelected()
+        assertTrue(viewModel.graphView.isInView(selector.id))
+    }
+
+    @Test
+    fun thereIsNoOutline() = test {
+        onAllNodesWithTag("tree").assertCountEquals(0)
+        for (node in snapshot.nodes.values) onAllNodesWithTag("toggle-${node.id}").assertCountEquals(0)
+        onNodeWithTag("graph").assertExists()
     }
 
     @Test
@@ -83,4 +105,10 @@ class TraceScreenUiTest {
         waitForIdle()
         onAllNodesWithTag("banner").assertCountEquals(0)
     }
+}
+
+/** Centre of a node's box in the graph pane, in pixels of the pane. */
+fun TraceViewModel.centreInPane(nodeId: Long, density: Float): Offset {
+    val rect = graphView.viewport.toScreen(graphView.rect(nodeId)!!)
+    return Offset(rect.centerX * density, rect.centerY * density)
 }

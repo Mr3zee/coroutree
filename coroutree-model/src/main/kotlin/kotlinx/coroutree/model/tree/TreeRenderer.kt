@@ -38,12 +38,7 @@ public class TreeRenderer(
             if (link.from != id) continue
             val target = snapshot.node(link.to) ?: continue
             if (!includeNode(target)) continue
-            val verb = when (link.kind) {
-                CrossLink.Kind.LAUNCHED_FROM -> "launches"
-                CrossLink.Kind.CANCELS -> "cancels"
-                CrossLink.Kind.INTERRUPTS -> "interrupts"
-            }
-            append(indent).append("  ~ ").append(verb).append(' ').append(target.title).append('\n')
+            append(indent).append("  ~ ").append(link.kind.verb).append(' ').append(target.title).append('\n')
         }
         for (child in node.children) appendNode(snapshot, child, depth + 1)
     }

@@ -50,11 +50,12 @@ class ScreenshotTest {
         }
     }
 
+    /** An event that names another node: both nodes and the edge between them stand out. */
     @Test
-    fun nodeAndEventSelected() {
+    fun eventSelected() {
         for (dark in listOf(false, true)) {
             val viewModel = TraceViewModel().also { it.snapshot = snapshot }
-            viewModel.selectEvent(snapshot.named("payment").events.first { it.kind == EventKind.EXCEPTION_THROWN })
+            viewModel.selectEvent(snapshot.constructed("coroutineScope").events.first { it.kind == EventKind.EXCEPTION_PROPAGATED })
             capture(if (dark) "event-selected-dark" else "event-selected-light") { Screen(viewModel, dark, FeedStatus.RECORDED) }
         }
     }
@@ -64,6 +65,59 @@ class ScreenshotTest {
         val viewModel = TraceViewModel().also { it.snapshot = snapshot }
         viewModel.navigateTo(snapshot.named("metrics").id)
         capture("links-selected-light") { Screen(viewModel, dark = false, FeedStatus.RECORDED) }
+    }
+
+    /** Pools and library internals in the graph, dimmed, and with them the thread the selected coroutine runs on. */
+    @Test
+    fun libraryShown() {
+        for (dark in listOf(false, true)) {
+            val viewModel = TraceViewModel().also { it.snapshot = snapshot }
+            viewModel.showLibrary(true)
+            viewModel.selectNode(snapshot.named("receipt").id)
+            capture(if (dark) "library-dark" else "library-light") { Screen(viewModel, dark, FeedStatus.RECORDED) }
+        }
+    }
+
+    @Test
+    fun zoomedToSelection() {
+        val viewModel = TraceViewModel().also { it.snapshot = snapshot }
+        val payment = snapshot.named("payment")
+        viewModel.selectNode(payment.id)
+        runDesktopComposeUiTest(1360, 860) {
+            setContent { Screen(viewModel, dark = false, FeedStatus.RECORDED) }
+            waitForIdle()
+            viewModel.graphView.zoomTo(payment.id)
+            waitForIdle()
+            ImageIO.write(captureToImage().toAwtImage(), "png", File(outputDir, "zoomed-light.png"))
+        }
+    }
+
+    /** A few hundred nodes: fitted (lines a pixel wide, faint), and at a zoom where boxes are coloured rectangles and the minimap is up. */
+    @Test
+    fun largeGraph() {
+        val viewModel = TraceViewModel().also { it.snapshot = snapshotOf(largeTrace(nodes = 700, links = 120, seed = 11)) }
+        runDesktopComposeUiTest(1360, 860) {
+            setContent { Screen(viewModel, dark = false, FeedStatus.RECORDED) }
+            waitForIdle()
+            ImageIO.write(captureToImage().toAwtImage(), "png", File(outputDir, "large-fitted-light.png"))
+            viewModel.graphView.zoom(0.25f / viewModel.graphView.viewport.zoom)
+            waitForIdle()
+            ImageIO.write(captureToImage().toAwtImage(), "png", File(outputDir, "large-light.png"))
+        }
+    }
+
+    /** A frame from the middle of a glide: the library has just been switched on. */
+    @Test
+    fun midGlide() {
+        val viewModel = TraceViewModel().also { it.snapshot = snapshot }
+        runDesktopComposeUiTest(1360, 860) {
+            setContent { Screen(viewModel, dark = false, FeedStatus.LIVE) }
+            waitForIdle()
+            mainClock.autoAdvance = false
+            viewModel.showLibrary(true)
+            mainClock.advanceTimeBy(230)
+            ImageIO.write(captureToImage().toAwtImage(), "png", File(outputDir, "glide-light.png"))
+        }
     }
 
     /** `./gradlew :coroutree-gui:test -PscreenshotTrace=/path/to/trace.ctrace`: how a real trace looks, not the demo. */
