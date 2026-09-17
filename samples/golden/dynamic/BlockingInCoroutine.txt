@@ -1,0 +1,38 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - blocked (sleep) in launch "sleeper"
+  - unblocked
+  - blocked (runBlocking) in launch "nested"
+  - blocked (join) in launch "spawner"
+  - unblocked
+  - unblocked
+  - unblocked
+  - completed
+  runBlocking @ BlockingInCoroutine.kt:13 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - completed
+    launch "sleeper" @ BlockingInCoroutine.kt:14 [completed] {+CoroutineName: sleeper}
+      - resumed
+      - blocked its thread (sleep)
+      - unblocked its thread
+      - completed
+    launch "nested" @ BlockingInCoroutine.kt:17 [completed] {+CoroutineName: nested}
+      - resumed
+      - blocked its thread (runBlocking)
+      - unblocked its thread
+      - completed
+      runBlocking "inner" @ BlockingInCoroutine.kt:18 [completed] {+CoroutineName: inner, +Dispatcher: BlockingEventLoop}
+        - resumed
+        - suspended at BlockingInCoroutine.kt:19
+        - resumed
+        - completed
+    launch "spawner" @ BlockingInCoroutine.kt:22 [completed] {+CoroutineName: spawner}
+      - resumed
+      - blocked its thread (join)
+      - unblocked its thread
+      - completed
+      ~ launches thread "helper"
+  thread "helper" @ BlockingInCoroutine.kt:23 [completed]
+    - blocked (sleep)
+    - unblocked
+    - completed

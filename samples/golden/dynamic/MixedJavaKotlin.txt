@@ -1,0 +1,36 @@
+Thread "main" [completed]
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - completed
+  Thread.start "java-worker-0" @ JavaWorkers.java:22 [completed]
+    - blocked (runBlocking)
+    - unblocked
+    - completed
+    runBlocking "call from java-worker-0" @ MixedJavaKotlin.kt:15 [completed] {+CoroutineName: call from java-worker-0, +Dispatcher: BlockingEventLoop}
+      - resumed
+      - completed
+      launch @ MixedJavaKotlin.kt:16 [completed]
+        - resumed
+        - suspended at MixedJavaKotlin.kt:16
+        - resumed
+        - completed
+  Thread.start "java-worker-1" @ JavaWorkers.java:22 [completed]
+    - blocked (runBlocking)
+    - IllegalStateException propagated from runBlocking "call from java-worker-1"
+    - unblocked
+    - IllegalStateException caught by catch
+    - completed
+    runBlocking "call from java-worker-1" @ MixedJavaKotlin.kt:15 [failed] {+CoroutineName: call from java-worker-1, +Dispatcher: BlockingEventLoop}
+      - resumed
+      - threw IllegalStateException: java-worker-1 failed
+      - cancelling: IllegalStateException: java-worker-1 failed
+      - cancellation propagated to child launch
+      - IllegalStateException propagated to Thread.start "java-worker-1"
+      - failed
+      launch @ MixedJavaKotlin.kt:16 [cancelled]
+        - cancelled by parent runBlocking "call from java-worker-1"
+        - cancelling: JobCancellationException: Parent job is Cancelling
+        - resumed
+        - cancelled

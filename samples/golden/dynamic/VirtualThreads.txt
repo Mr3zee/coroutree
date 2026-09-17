@@ -1,0 +1,26 @@
+Thread "main" [completed]
+  - blocked (sleep)
+  - unblocked
+  - interrupted Thread.ofVirtual().start "virtual interrupted"
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - completed
+  ~ interrupts Thread.ofVirtual().start "virtual interrupted"
+  Thread.ofVirtual().start "virtual sleeper" @ VirtualThreads.kt:5 [completed]
+    - blocked (sleep)
+    - unblocked
+    - completed
+  Thread.ofVirtual().start "virtual interrupted" @ VirtualThreads.kt:8 [completed]
+    - blocked (sleep)
+    - interrupted by Thread "main"
+    - unblocked
+    - InterruptedException caught by catch
+    - completed
+  Thread.start "virtual failing" @ VirtualThreads.kt:19 [failed]
+    - threw IllegalStateException: virtual thread failed
+    - IllegalStateException reached the uncaught exception handler
+    - failed

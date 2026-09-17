@@ -1,0 +1,53 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ SupervisorAndHandler.kt:17 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at SupervisorAndHandler.kt:20
+    - resumed
+    - suspended at SupervisorAndHandler.kt:35
+    - resumed
+    - suspended at SupervisorAndHandler.kt:35
+    - resumed
+    - completed
+    ~ launches SupervisorJob()
+    ~ launches launch "failing"
+    ~ launches launch "survivor"
+    supervisorScope @ SupervisorAndHandler.kt:20 [completed]
+      - IllegalArgumentException propagated from launch "failing"
+      - IllegalArgumentException of launch "failing" stopped here (supervisor)
+      - completed
+      launch "failing" @ SupervisorAndHandler.kt:21 [failed] {+CoroutineName: failing, +CoroutineExceptionHandler}
+        - resumed
+        - suspended at SupervisorAndHandler.kt:22
+        - resumed
+        - threw IllegalArgumentException: first
+        - cancelling: IllegalArgumentException: first
+        - IllegalArgumentException propagated to supervisorScope
+        - IllegalArgumentException stopped at supervisor supervisorScope
+        - IllegalArgumentException handled by CoroutineExceptionHandler
+        - failed
+      launch "survivor" @ SupervisorAndHandler.kt:25 [completed] {+CoroutineName: survivor}
+        - resumed
+        - suspended at SupervisorAndHandler.kt:26
+        - resumed
+        - completed
+SupervisorJob() @ SupervisorAndHandler.kt:30 [active]
+  - IllegalArgumentException propagated from launch "failing"
+  - IllegalArgumentException of launch "failing" stopped here (supervisor)
+  launch "failing" @ SupervisorAndHandler.kt:32 [failed] {+CoroutineExceptionHandler, +CoroutineName: failing, +Dispatcher: Dispatchers.Default}
+    - resumed
+    - suspended at SupervisorAndHandler.kt:32
+    - resumed
+    - threw IllegalArgumentException: second
+    - cancelling: IllegalArgumentException: second
+    - IllegalArgumentException propagated to SupervisorJob()
+    - IllegalArgumentException stopped at supervisor SupervisorJob()
+    - IllegalArgumentException handled by CoroutineExceptionHandler
+    - failed
+  launch "survivor" @ SupervisorAndHandler.kt:33 [completed] {+CoroutineExceptionHandler, +CoroutineName: survivor, +Dispatcher: Dispatchers.Default}
+    - resumed
+    - suspended at SupervisorAndHandler.kt:33
+    - resumed
+    - completed

@@ -1,0 +1,32 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ ExceptionPropagation.kt:13 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at ExceptionPropagation.kt:15
+    - IllegalStateException propagated from coroutineScope
+    - resumed
+    - IllegalStateException caught by catch
+    - completed
+    coroutineScope @ ExceptionPropagation.kt:15 [failed]
+      - IllegalStateException propagated from launch "failing"
+      - cancelling: IllegalStateException: boom
+      - cancellation propagated to child launch "sibling"
+      - IllegalStateException propagated to runBlocking
+      - failed
+      launch "sibling" @ ExceptionPropagation.kt:16 [cancelled] {+CoroutineName: sibling}
+        - resumed
+        - suspended at ExceptionPropagation.kt:17
+        - cancelled by parent coroutineScope
+        - cancelling: JobCancellationException: Parent job is Cancelling
+        - resumed
+        - cancelled
+      launch "failing" @ ExceptionPropagation.kt:19 [failed] {+CoroutineName: failing}
+        - resumed
+        - suspended at ExceptionPropagation.kt:20
+        - resumed
+        - threw IllegalStateException: boom
+        - cancelling: IllegalStateException: boom
+        - IllegalStateException propagated to coroutineScope
+        - failed

@@ -1,0 +1,7 @@
+.gradle/
+build/
+out/
+.kotlin/
+*.ctrace
+local.properties
+.DS_Store

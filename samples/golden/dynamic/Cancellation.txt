@@ -1,0 +1,69 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ Cancellation.kt:19 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at Cancellation.kt:26
+    - resumed
+    - suspended at Cancellation.kt:39
+    - resumed
+    - requested cancellation of launch "parent"
+    - suspended at Cancellation.kt:40
+    - resumed
+    - requested cancellation of Job()
+    - completed
+    ~ cancels launch "parent"
+    ~ launches Job()
+    ~ launches launch "service"
+    ~ cancels Job()
+    launch "victim" @ Cancellation.kt:20 [cancelled] {+CoroutineName: victim}
+      - resumed
+      - suspended at Cancellation.kt:21
+      - cancellation requested by launch "assassin"
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - resumed
+      - cancelled
+    launch "assassin" @ Cancellation.kt:23 [completed] {+CoroutineName: assassin}
+      - resumed
+      - suspended at Cancellation.kt:24
+      - resumed
+      - requested cancellation of launch "victim"
+      - completed
+      ~ cancels launch "victim"
+    launch "parent" @ Cancellation.kt:28 [cancelled] {+CoroutineName: parent}
+      - resumed
+      - suspended at Cancellation.kt:37
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - cancellation propagated to child launch "child"
+      - cancellation propagated to child launch "stubborn child"
+      - resumed
+      - cancelled
+      launch "child" @ Cancellation.kt:29 [cancelled] {CoroutineName: parent → child}
+        - resumed
+        - suspended at Cancellation.kt:29
+        - cancelled by parent launch "parent"
+        - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+        - resumed
+        - cancelled
+      launch "stubborn child" @ Cancellation.kt:30 [cancelled] {CoroutineName: parent → stubborn child}
+        - resumed
+        - suspended at Cancellation.kt:32
+        - cancelled by parent launch "parent"
+        - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+        - resumed
+        - JobCancellationException caught by catch
+        - cancelled
+Job() @ Cancellation.kt:44 [cancelled]
+  - cancellation requested by runBlocking
+  - cancelling: CancellationException: shutting down
+  - cancellation propagated to child launch "service"
+  - cancelled
+  launch "service" @ Cancellation.kt:45 [cancelled] {+CoroutineName: service, +Dispatcher: Dispatchers.Unconfined}
+    - resumed
+    - suspended at Cancellation.kt:45
+    - cancelled by parent Job()
+    - cancelling: CancellationException: shutting down
+    - resumed
+    - cancelled

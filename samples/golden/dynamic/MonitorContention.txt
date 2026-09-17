@@ -1,0 +1,26 @@
+Thread "main" [completed]
+  - blocked (sleep)
+  - unblocked
+  - blocked (runBlocking)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - completed
+  thread "holder" @ MonitorContention.kt:15 [completed]
+    - blocked (sleep)
+    - unblocked
+    - completed
+  thread "contender" @ MonitorContention.kt:19 [completed]
+    - blocked (monitor)
+    - unblocked
+    - completed
+  runBlocking @ MonitorContention.kt:22 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - completed
+    launch "contending coroutine" @ MonitorContention.kt:23 [completed] {+CoroutineName: contending coroutine, Dispatcher: BlockingEventLoop → Dispatchers.Default}
+      - resumed
+      - blocked its thread (monitor)
+      - unblocked its thread
+      - completed

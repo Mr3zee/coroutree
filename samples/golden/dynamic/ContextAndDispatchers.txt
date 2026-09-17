@@ -1,0 +1,29 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking "root" @ ContextAndDispatchers.kt:14 [completed] {+CoroutineName: root, +Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at ContextAndDispatchers.kt:15
+    - resumed
+    - suspended at ContextAndDispatchers.kt:18
+    - resumed
+    - completed
+    withContext @ ContextAndDispatchers.kt:15 [completed] {Dispatcher: BlockingEventLoop → Dispatchers.IO}
+      - resumed
+      - suspended at ContextAndDispatchers.kt:16
+      - resumed
+      - completed
+    withContext "renamed" @ ContextAndDispatchers.kt:18 [completed] {CoroutineName: root → renamed, +RequestId: RequestId(r-42)}
+      - suspended at ContextAndDispatchers.kt:19
+      - resumed
+      - completed
+    launch @ ContextAndDispatchers.kt:21 [completed] {+TraceTag: TraceTag(tagged), Dispatcher: BlockingEventLoop → Dispatchers.Default}
+      - resumed
+      - suspended at ContextAndDispatchers.kt:22
+      - resumed
+      - completed
+      withContext @ ContextAndDispatchers.kt:22 [completed]
+        - suspended at ContextAndDispatchers.kt:23
+        - resumed
+        - completed

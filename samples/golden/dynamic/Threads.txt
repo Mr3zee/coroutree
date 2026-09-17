@@ -1,0 +1,49 @@
+Thread "main" [completed]
+  - blocked (sleep)
+  - unblocked
+  - interrupted thread "sleeper"
+  - interrupted Thread.start "interrupted early"
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - completed
+  ~ interrupts thread "sleeper"
+  ~ interrupts Thread.start "interrupted early"
+  thread "waiter" @ Threads.kt:12 [completed]
+    - blocked (wait)
+    - unblocked
+    - completed
+  thread "sleeper" @ Threads.kt:17 [completed]
+    - blocked (sleep)
+    - interrupted by Thread "main"
+    - unblocked
+    - InterruptedException caught by catch
+    - completed
+  thread "parker" @ Threads.kt:25 [completed]
+    - blocked (park)
+    - unblocked
+    - completed
+  Thread.start "outer" @ Threads.kt:33 [completed]
+    - blocked (join)
+    - unblocked
+    - completed
+    Thread.start "inner" @ Threads.kt:30 [completed]
+      - blocked (sleep)
+      - unblocked
+      - completed
+  Thread.start "interrupted early" @ Threads.kt:47 [completed]
+    - interrupted by Thread "main"
+    - completed
+  Thread.start "failing" @ Threads.kt:51 [failed]
+    - threw IllegalStateException: thread failed
+    - IllegalStateException reached the uncaught exception handler
+    - failed

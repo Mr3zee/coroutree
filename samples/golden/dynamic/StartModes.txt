@@ -1,0 +1,25 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ StartModes.kt:12 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at StartModes.kt:19
+    - resumed
+    - suspended at StartModes.kt:20
+    - resumed
+    - requested cancellation of launch "never started"
+    - completed
+    ~ cancels launch "never started"
+    async "lazy" @ StartModes.kt:13 [completed] {+CoroutineName: lazy}
+      - resumed
+      - completed
+    launch "never started" @ StartModes.kt:14 [cancelled] {+CoroutineName: never started}
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: LazyStandaloneCoroutine was cancelled
+      - cancelled
+    launch "undispatched" @ StartModes.kt:15 [completed] {+CoroutineName: undispatched}
+      - resumed
+      - suspended at StartModes.kt:17
+      - resumed
+      - completed

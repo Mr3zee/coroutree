@@ -1,0 +1,28 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ DeferredHeldException.kt:17 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at DeferredHeldException.kt:26
+    - resumed
+    - IllegalStateException caught by catch
+    - completed
+    ~ launches async "held"
+    ~ launches launch "orphan"
+async "held" @ DeferredHeldException.kt:18 [failed] {+CoroutineName: held, +Dispatcher: Dispatchers.Unconfined}
+  - resumed
+  - suspended at DeferredHeldException.kt:19
+  - resumed
+  - threw IllegalStateException: kept for later
+  - cancelling: IllegalStateException: kept for later
+  - IllegalStateException held in Deferred until awaited
+  - failed
+launch "orphan" @ DeferredHeldException.kt:22 [failed] {+CoroutineName: orphan, +Dispatcher: Dispatchers.Unconfined}
+  - resumed
+  - suspended at DeferredHeldException.kt:23
+  - resumed
+  - threw IllegalStateException: nobody listens
+  - cancelling: IllegalStateException: nobody listens
+  - IllegalStateException reached the uncaught exception handler
+  - failed

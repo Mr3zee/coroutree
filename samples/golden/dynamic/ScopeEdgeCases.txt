@@ -1,0 +1,55 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ ScopeEdgeCases.kt:20 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at ScopeEdgeCases.kt:22
+    - IllegalStateException propagated from withContext "remote"
+    - resumed
+    - IllegalStateException caught by catch
+    - requested cancellation of Job()
+    - suspended at ScopeEdgeCases.kt:31
+    - resumed
+    - suspended at ScopeEdgeCases.kt:40
+    - resumed
+    - requested cancellation of launch "worker"
+    - suspended at ScopeEdgeCases.kt:41
+    - resumed
+    - IllegalStateException caught by catch
+    - completed
+    ~ launches Job()
+    ~ cancels Job()
+    ~ launches launch "stillborn"
+    ~ cancels launch "worker"
+    withContext "remote" @ ScopeEdgeCases.kt:22 [failed] {+CoroutineName: remote, Dispatcher: BlockingEventLoop → Dispatchers.Default}
+      - resumed
+      - suspended at ScopeEdgeCases.kt:23
+      - resumed
+      - threw IllegalStateException: failed on another thread
+      - cancelling: IllegalStateException: failed on another thread
+      - IllegalStateException propagated to runBlocking
+      - failed
+    launch "worker" @ ScopeEdgeCases.kt:33 [cancelled] {+CoroutineName: worker}
+      - resumed
+      - suspended at ScopeEdgeCases.kt:35
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - resumed
+      - suspended at ScopeEdgeCases.kt:37
+      - resumed
+      - cancelled
+      withContext @ ScopeEdgeCases.kt:37 [completed]
+        - suspended at ScopeEdgeCases.kt:37
+        - resumed
+        - completed
+Job() @ ScopeEdgeCases.kt:30 [cancelled]
+  - cancellation requested by runBlocking
+  - cancelling: JobCancellationException: Job was cancelled
+  - cancelled
+  - cancellation propagated to child launch "stillborn"
+  launch "stillborn" @ ScopeEdgeCases.kt:31 [cancelled] {+CoroutineName: stillborn, +Dispatcher: BlockingEventLoop}
+    - cancelled by parent Job()
+    - cancelling: JobCancellationException: Job was cancelled
+    - resumed
+    - cancelled

@@ -1,0 +1,33 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ StructuredConcurrency.kt:11 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at StructuredConcurrency.kt:19
+    - resumed
+    - completed
+    async "greeting" @ StructuredConcurrency.kt:12 [completed] {+CoroutineName: greeting}
+      - resumed
+      - suspended at StructuredConcurrency.kt:13
+      - resumed
+      - completed
+    launch "printer" @ StructuredConcurrency.kt:16 [completed] {+CoroutineName: printer}
+      - resumed
+      - suspended at StructuredConcurrency.kt:17
+      - resumed
+      - completed
+    coroutineScope @ StructuredConcurrency.kt:23 [completed]
+      - suspended at StructuredConcurrency.kt:26
+      - resumed
+      - completed
+      async "left" @ StructuredConcurrency.kt:24 [completed] {+CoroutineName: left}
+        - resumed
+        - suspended at StructuredConcurrency.kt:24
+        - resumed
+        - completed
+      async "right" @ StructuredConcurrency.kt:25 [completed] {+CoroutineName: right}
+        - resumed
+        - suspended at StructuredConcurrency.kt:25
+        - resumed
+        - completed

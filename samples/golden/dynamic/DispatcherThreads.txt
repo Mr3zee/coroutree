@@ -1,0 +1,52 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ DispatcherThreads.kt:14 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at DispatcherThreads.kt:21
+    - resumed
+    - completed
+    launch "worker-0" @ DispatcherThreads.kt:16 [completed] {+CoroutineName: worker-0, Dispatcher: BlockingEventLoop → Dispatchers.Default}
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - blocked its thread (sleep)
+      - unblocked its thread
+      - completed
+    launch "worker-1" @ DispatcherThreads.kt:16 [completed] {+CoroutineName: worker-1, Dispatcher: BlockingEventLoop → Dispatchers.Default}
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - completed
+    launch "worker-2" @ DispatcherThreads.kt:16 [completed] {+CoroutineName: worker-2, Dispatcher: BlockingEventLoop → Dispatchers.Default}
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - completed
+    launch "worker-3" @ DispatcherThreads.kt:16 [completed] {+CoroutineName: worker-3, Dispatcher: BlockingEventLoop → Dispatchers.Default}
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - suspended at DispatcherThreads.kt:17
+      - resumed
+      - completed
+    withContext "io" @ DispatcherThreads.kt:21 [completed] {+CoroutineName: io, Dispatcher: BlockingEventLoop → Dispatchers.IO}
+      - resumed
+      - blocked its thread (sleep)
+      - unblocked its thread
+      - completed

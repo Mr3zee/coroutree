@@ -1,0 +1,28 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ Timeouts.kt:10 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at Timeouts.kt:11
+    - resumed
+    - suspended at Timeouts.kt:15
+    - resumed
+    - TimeoutCancellationException caught by catch
+    - suspended at Timeouts.kt:21
+    - resumed
+    - completed
+    withTimeout @ Timeouts.kt:11 [completed]
+      - suspended at Timeouts.kt:12
+      - resumed
+      - completed
+    withTimeout @ Timeouts.kt:15 [cancelled]
+      - suspended at Timeouts.kt:16
+      - cancelling: TimeoutCancellationException: Timed out waiting for 20 ms
+      - resumed
+      - cancelled
+    withTimeoutOrNull @ Timeouts.kt:21 [cancelled]
+      - suspended at Timeouts.kt:22
+      - cancelling: TimeoutCancellationException: Timed out waiting for 20 ms
+      - resumed
+      - cancelled
