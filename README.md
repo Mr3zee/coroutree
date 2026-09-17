@@ -7,7 +7,9 @@ and where they went, cancellation and who asked for it, blocked threads — in h
 A Gradle plugin attaches a Java agent to the JVMs your build forks; a desktop GUI shows what the agent saw.
 
 Design: [docs/DESIGN.md](docs/DESIGN.md). Trace format: [docs/TRACE_FORMAT.md](docs/TRACE_FORMAT.md).
-**Status: milestone 1 of 5** — the dynamic vertical slice. There is no static mode yet.
+**Status: milestone 1 of 5** — the dynamic vertical slice. There is no static mode yet. The GUI is meant to draw the
+tree as a graph (a top-down node-link diagram with the cross-links as edges); what milestone 1 shipped is an indented
+outline, and replacing it is the next step (M1.1 in the design).
 
 ## Trying it
 
@@ -66,7 +68,7 @@ with another version it says so, and says loudly if the internals it hooks are n
 | `coroutree-model` | The trace format (kotlinx.serialization protobuf) and the fold from events to a tree. Shared by the GUI, the tests and, later, the static mode. |
 | `coroutree-agent` | The Java agent. `main`: premain and ASM transformers. `runtime`: what instrumented code calls, on the bootstrap class path — plain Java without dependencies, including its own protobuf writer. `native`: the JVMTI monitor-contention probe, one C file. |
 | `coroutree-gradle-plugin` | DSL, agent wiring for `JavaExec`/`Test`, the source index that lets the GUI map stack frames to files, `coroutreeView`. Depends on nothing but Gradle. |
-| `coroutree-gui` | Compose Multiplatform Desktop app: tree, event log, details, open-in-IDE; recorded and live. |
+| `coroutree-gui` | Compose Multiplatform Desktop app: the concurrency tree (as an outline for now, as a graph from M1.1), event log, details, open-in-IDE; recorded and live. |
 | `coroutree-integration-tests` | Runs the sample corpus under the real agent in forked JVMs: golden trees, the live stream, the plugin ↔ agent contract, three kotlinx.coroutines versions, an unsupported one. |
 | `samples/` | The corpus, as a standalone build that uses the plugin. |
 | `spikes/` | Experiments behind design decisions; see [docs/spikes](docs/spikes). |

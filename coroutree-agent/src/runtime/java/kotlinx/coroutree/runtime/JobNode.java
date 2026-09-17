@@ -3,8 +3,9 @@ package kotlinx.coroutree.runtime;
 import java.lang.ref.WeakReference;
 
 /**
- * Runtime state of a coroutine, scope, context change or plain Job. Hangs off the job itself, see {@link Tagged},
- * and must not keep application objects alive longer than the job does.
+ * Runtime state of a coroutine, scope, context change or plain Job. Hangs off the job itself, see {@link Tagged}
+ * (a coroutine without a Job: off its root frame, through a weak map), and must not keep application objects alive
+ * longer than the job does.
  */
 final class JobNode {
     static final int NEW = 0;

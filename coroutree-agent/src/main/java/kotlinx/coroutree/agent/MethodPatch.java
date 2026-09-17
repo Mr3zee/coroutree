@@ -15,8 +15,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Calls to {@code kotlinx.coroutree.runtime.Hooks} woven into one method: at its start, before its returns, or around
- * it like try/finally.
+ * Calls to {@code kotlinx.coroutree.runtime.Hooks} woven into one method: at its start, before its returns, around
+ * it like try/finally, or in front of a call it makes.
  *
  * Inserted code is straight-line on purpose. No branches means no new stack map frames inside existing code, so classes
  * are rewritten without recomputing frames — which would need the class hierarchy, i.e. class loading from inside a
@@ -32,14 +32,21 @@ final class MethodPatch {
     private final HookCall onEnter;
     private final HookCall onExit;
     private final boolean exitOnThrow;
+    /** Set for {@link #beforeCall}: the call, as owner, name and descriptor, that {@code onEnter} goes in front of. */
+    private final String[] call;
 
-    private MethodPatch(String name, String descriptor, boolean required, HookCall onEnter, HookCall onExit, boolean exitOnThrow) {
+    private MethodPatch(String name, String descriptor, boolean required, HookCall onEnter, HookCall onExit, boolean exitOnThrow, String[] call) {
         this.name = name;
         this.descriptor = descriptor;
         this.required = required;
         this.onEnter = onEnter;
         this.onExit = onExit;
         this.exitOnThrow = exitOnThrow;
+        this.call = call;
+    }
+
+    private MethodPatch(String name, String descriptor, boolean required, HookCall onEnter, HookCall onExit, boolean exitOnThrow) {
+        this(name, descriptor, required, onEnter, onExit, exitOnThrow, null);
     }
 
     static MethodPatch enter(String name, String descriptor, HookCall hook) {
@@ -60,8 +67,16 @@ final class MethodPatch {
         return new MethodPatch(name, descriptor, true, enter, exit, true);
     }
 
+    /**
+     * In front of every call the method makes to {@code callOwner.callName callDescriptor}, which must be one with a
+     * receiver and a single one-slot argument: that is what {@link Args#callOperands} knows how to hand to the hook.
+     */
+    static MethodPatch beforeCall(String name, String descriptor, String callOwner, String callName, String callDescriptor, HookCall hook) {
+        return new MethodPatch(name, descriptor, true, hook, null, false, new String[] {callOwner, callName, callDescriptor});
+    }
+
     MethodPatch optional() {
-        return new MethodPatch(name, descriptor, false, onEnter, onExit, exitOnThrow);
+        return new MethodPatch(name, descriptor, false, onEnter, onExit, exitOnThrow, call);
     }
 
     boolean matches(MethodNode method) {
@@ -72,6 +87,7 @@ final class MethodPatch {
     boolean apply(String owner, MethodNode method) {
         if (method.instructions.size() == 0) return false;
         Context context = new Context(owner, method);
+        if (call != null) return applyBeforeCalls(method, context);
 
         if (onExit != null) {
             for (AbstractInsnNode insn : method.instructions.toArray()) {
@@ -104,6 +120,18 @@ final class MethodPatch {
             method.tryCatchBlocks.add(new TryCatchBlockNode(start, end, handler, null));
         }
         return true;
+    }
+
+    /** Returns false if the method does not make the call: as good as a method that is not there. */
+    private boolean applyBeforeCalls(MethodNode method, Context context) {
+        boolean found = false;
+        for (AbstractInsnNode insn : method.instructions.toArray()) {
+            if (insn instanceof MethodInsnNode made && made.owner.equals(call[0]) && made.name.equals(call[1]) && made.desc.equals(call[2])) {
+                method.instructions.insertBefore(insn, onEnter.emit(context, -1));
+                found = true;
+            }
+        }
+        return found;
     }
 
     /** What a {@link HookCall} needs to know about the method it is emitted into. */

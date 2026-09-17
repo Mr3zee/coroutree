@@ -51,6 +51,8 @@ class GoldenTreeTest {
             "BlockingInCoroutine",
             "DispatcherThreads",
             "MixedJavaKotlin",
+            "SuspendMain",
+            "InlineFunctions",
         )
 
         fun check(sample: String, run: AgentRun, mayUpdate: Boolean) {

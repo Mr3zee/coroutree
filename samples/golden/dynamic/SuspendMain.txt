@@ -1,0 +1,25 @@
+Thread "main" [completed]
+  - blocked (wait)
+  - unblocked
+  - completed
+  suspend fun main @ SuspendMain.kt:16 [completed]
+    - resumed
+    - suspended at SuspendMain.kt:17
+    - resumed
+    - suspended at SuspendMain.kt:18
+    - resumed
+    - completed
+    ~ launches startCoroutine "raw"
+    coroutineScope @ SuspendMain.kt:18 [completed]
+      - completed
+      launch "child" @ SuspendMain.kt:19 [completed] {+CoroutineName: child, +Dispatcher: Dispatchers.Default}
+        - resumed
+        - suspended at SuspendMain.kt:19
+        - resumed
+        - completed
+startCoroutine "raw" @ SuspendMain.kt:28 [failed] {+CoroutineName: raw}
+  - resumed
+  - suspended at SuspendMain.kt:25
+  - resumed
+  - threw IllegalStateException: resumed with 'go'
+  - failed

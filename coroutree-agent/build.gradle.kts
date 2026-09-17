@@ -41,6 +41,15 @@ dependencies {
     compileOnly(runtime.output)
     shade(libs.asm)
     shade(libs.asm.tree)
+
+    testImplementation(runtime.output)
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.platform.launcher)
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 val generateBuildInfo by tasks.registering {

@@ -66,6 +66,7 @@ message SourceFile   { string package_name = 1;  string file_name = 2;  string p
 // Stack frames are interned. A definition precedes the first event that refers to it. Ids start at 1 and are dense.
 message StackFrameDef {
   int32 id = 1;  string class_name = 2;  string method_name = 3;  string file_name = 4;  int32 line = 5;
+  bool inlined = 6;                          // the body of an inline function, see "Inlined code" below
 }
 
 message Diagnostic {                         // the agent talking about the capture itself
@@ -122,14 +123,14 @@ enum PropagationDirection { DIRECTION_UNSPECIFIED = 0; PARENT_TO_CHILD = 1; CHIL
 message NodeInfo {
   int64    id         = 1;    // unique in the trace, never reused, starts at 1
   NodeKind kind       = 2;
-  string   construct  = 3;    // launch, withContext, coroutineScope, Job(), Thread.start, thread, worker, …
+  string   construct  = 3;    // launch, withContext, coroutineScope, Job(), suspend fun main, startCoroutine, Thread.start, worker, …
   string   name       = 4;    // CoroutineName the node was given itself (not an inherited one), or the thread name
   int64    parent_id  = 5;    // structural parent: parent Job / starting thread / owning pool; 0 = root
   int64    creator_id = 6;    // execution unit whose code created the node; a cross-link, not a tree edge
   int32    site_frame = 7;    // frame id of the source site
   Origin   origin     = 8;
   repeated ContextElement context = 9;
-  string   impl_class = 10;   // kotlinx.coroutines.StandaloneCoroutine
+  string   impl_class = 10;   // kotlinx.coroutines.StandaloneCoroutine; without a Job, the class of what the coroutine completes into
   ThreadInfo thread   = 11;   // threads only
 }
 
@@ -170,6 +171,10 @@ end of the stream, or when too many events pile up behind a gap, it lets them th
 **Nodes** are defined by the `node` of a `LAUNCHED` or `DISCOVERED` event. An event may refer to a node that is defined
 later in the stream; a reader keeps a placeholder.
 
+**Coroutines without a Job** (`suspend fun main`, bare `startCoroutine`) are `COROUTINE` nodes like any other, minus
+what a Job brings: no cancellation events, and a `CancellationException` they end with is `FAILED`. `suspend fun main`
+is a child of its thread, the rest are roots. Generators (`sequence`, `iterator`) are not in the trace at all.
+
 **Two-node events** belong to the node they happen to (`node_id`) and name the other one in `other_node_id`. A reader
 shows them on both. Cross-links are derived: `creator_id ≠ parent_id` → *launched from*; `CANCELLATION_REQUESTED` →
 *cancels*; `THREAD_INTERRUPTED` → *interrupts*; the thread of the latest `RESUMED` → *runs on*.
@@ -182,6 +187,19 @@ outnumber `THREAD_UNBLOCKED`s (they nest: a thread blocked in `runBlocking` runs
 Kotlin standard library and kotlinx.coroutines. `origin` is `PROJECT` when that frame's class matches
 `include_packages` (and not `exclude_packages`). Threads are `PROJECT` only when the site called a thread-starting API
 directly; a timer thread started behind `delay` has a site but is `LIBRARY`.
+
+**Inlined code.** Stacks are logical, not the JVM's. The Kotlin compiler copies the body of an inline function into
+the calling method and numbers the copy with lines past the end of the caller's file; the agent reads the way back
+from the class's source map (SMAP) and writes such a JVM frame as several. First the body, `inlined = true`:
+`class_name` is the class that declares the inline function (so that package and `file_name` find the file like for
+any frame), `line` the line in that file, `method_name` the function, empty where the class file did not tell. Then,
+in project classes, one `inlined` frame for every inline function that one was inlined through, at the line of the
+call. Last the call site: the JVM frame's class and method with the file and line of the outermost inline call. A
+frame in a lambda that was compiled into a copy of an inline function's anonymous class is one frame, with its real
+file and line. The rule for the source site is unchanged and now means what it should: a construct inside a project's
+inline function has its site there, in a library's inline function at the project's call. This goes for every stack
+in the trace (events, exceptions, suspension points) and for the classes of libraries as well as the project's.
+The `main(String[])` behind a `suspend fun main`, which has no line numbers, is given the line of the declaration.
 
 ## Live stream
 

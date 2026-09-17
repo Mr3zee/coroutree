@@ -78,6 +78,7 @@ class CorpusTest {
         val VERSION_SENSITIVE_SAMPLES = listOf(
             "StructuredConcurrency", "ContextAndDispatchers", "ExceptionPropagation", "SupervisorAndHandler",
             "DeferredHeldException", "Cancellation", "Timeouts", "StartModes", "ScopeEdgeCases", "BlockingInCoroutine",
+            "SuspendMain", "InlineFunctions",
         )
     }
 }

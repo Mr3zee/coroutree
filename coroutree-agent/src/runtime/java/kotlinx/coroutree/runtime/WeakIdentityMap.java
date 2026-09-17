@@ -4,13 +4,18 @@ import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Concurrent map with weakly held keys compared by identity. For threads and pools, which cannot carry a tag field. */
+/** Concurrent map with weakly held keys compared by identity. For threads, pools and continuations, which cannot carry a tag field. */
 final class WeakIdentityMap<K, V> {
     private final ConcurrentHashMap<Object, V> map = new ConcurrentHashMap<>();
     private final ReferenceQueue<K> collected = new ReferenceQueue<>();
 
     V get(K key) {
         return map.get(new Lookup(key));
+    }
+
+    /** Whether nothing was ever put, or all of it is gone: lets a lookup on a hot path cost nothing in programs that never put. */
+    boolean isEmpty() {
+        return map.isEmpty();
     }
 
     /** Returns the value already present, or {@code null} if {@code value} was put. */

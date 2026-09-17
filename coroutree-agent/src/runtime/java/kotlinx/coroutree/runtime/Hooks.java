@@ -31,7 +31,7 @@ public final class Hooks {
         if (ts.inHook) return;
         ts.inHook = true;
         try {
-            KotlinAccess access = KotlinAccess.getOrCreate(coroutine);
+            KotlinAccess access = KotlinAccess.forJob(coroutine);
             if (access == null || !(coroutine instanceof Tagged tagged)) return;
             Tagged parent = access.job(parentContext);
             createJobNode(ts, access, tagged, parent, context);
@@ -49,7 +49,7 @@ public final class Hooks {
         if (ts.inHook) return;
         ts.inHook = true;
         try {
-            KotlinAccess access = KotlinAccess.getOrCreate(job);
+            KotlinAccess access = KotlinAccess.forJob(job);
             if (access == null || !(job instanceof Tagged tagged)) return;
             createJobNode(ts, access, tagged, parent instanceof Tagged p ? p : null, null);
         } catch (Throwable e) {
@@ -242,7 +242,7 @@ public final class Hooks {
         if (ts.inHook) return;
         ts.inHook = true;
         try {
-            JobNode node = nodeOfContext(context, ts);
+            JobNode node = unitOf(frame, context, ts);
             if (node == null || node.finished) return;
             long tid = ts.thread.threadId();
             // A peek without the lock, to do the expensive part outside of it; the decision is made under the lock.
@@ -280,7 +280,7 @@ public final class Hooks {
         if (ts.inHook) return;
         ts.inHook = true;
         try {
-            JobNode node = nodeOfContext(context, ts);
+            JobNode node = unitOf(frame, context, ts);
             if (node == null) return;
             ts.popUnit(node);
             if (node.finished) return;
@@ -310,9 +310,165 @@ public final class Hooks {
 
     private static JobNode nodeOfContext(Object context, ThreadState ts) throws Throwable {
         KotlinAccess access = KotlinAccess.get();
-        if (access == null) return null; // no job has been created yet, so this continuation has none
+        if (access == null) return null; // nothing of Kotlin's coroutines has been seen yet
         Tagged job = access.job(context);
         return job == null ? null : nodeOf(job, ts);
+    }
+
+    /** The coroutine a frame belongs to: the one of the Job in its context, or a jobless one found by its root frame. */
+    private static JobNode unitOf(Object frame, Object context, ThreadState ts) throws Throwable {
+        KotlinAccess access = KotlinAccess.get();
+        if (access == null) return null;
+        Tagged job = access.job(context);
+        return job != null ? nodeOf(job, ts) : joblessNode(access, frame, null);
+    }
+
+    // ------------------------------------------------------------------ coroutines without a Job
+
+    /**
+     * Coroutines of the bare standard library ({@code suspend fun main}, {@code startCoroutine}, {@code createCoroutine}),
+     * by their root frame: the continuation the coroutine was created as, which every frame above it leads to.
+     * What the coroutine completes into does not identify it: nothing keeps a program from starting a hundred
+     * coroutines with one and the same completion object.
+     */
+    private static final WeakIdentityMap<Object, JobNode> JOBLESS = new WeakIdentityMap<>();
+
+    /**
+     * End of {@code createCoroutineUnintercepted}, which everything that creates a coroutine goes through. Most of what
+     * comes by belongs to a Job and is known already; what is left is a node of its own, generators excepted:
+     * for {@code sequence {}} to suspend at every {@code yield} is how it returns a value, not something that happens to it.
+     */
+    public static void continuationCreated(Object continuation) {
+        if (!Tracer.active) return;
+        ThreadState ts = ThreadState.current();
+        if (ts.inHook) return;
+        ts.inHook = true;
+        try {
+            KotlinAccess access = KotlinAccess.forContinuation(continuation);
+            if (access == null || !access.isCompiledFrame(continuation) || access.isGeneratorFrame(continuation)) return;
+            Object context = access.contextOf(continuation);
+            if (access.hasJob(context)) return;
+            JobNode node = new JobNode(Tracer.newNodeId(), false, false);
+            if (JOBLESS.putIfAbsent(continuation, node) != null) return;
+
+            ThreadNode thread = threadNode(ts);
+            JobNode unit = ts.currentUnit();
+            long creator = unit != null ? unit.id : thread.id;
+            StackFrameRef[] stack = StackCapture.captureForSite();
+            int site = StackCapture.siteIndex(stack);
+
+            TraceEvent.NodeDef def = new TraceEvent.NodeDef();
+            def.id = node.id;
+            def.kind = Wire.KIND_COROUTINE;
+            def.construct = StackCapture.construct(stack, site, "startCoroutine");
+            // What stands where a kotlinx.coroutines coroutine has its Job: the continuation it completes into.
+            Object completion = access.completionOf(continuation);
+            def.implClass = completion == null ? "" : completion.getClass().getName();
+            def.creatorId = creator;
+            // suspend fun main is to its thread what runBlocking is: the thread waits for it and gets its failure.
+            // Anything else was started and left to itself, which is what a root is.
+            if (def.construct.equals(StackCapture.SUSPEND_MAIN)) {
+                def.parentId = creator;
+                node.rethrowsToId = creator;
+                node.rethrowsTo = unit;
+            }
+            setSite(def, stack, site);
+
+            ContextEntry[] parentContext = def.parentId != 0 && unit != null ? unit.context : null;
+            ArrayList<ContextEntry> entries = new ArrayList<>();
+            for (Object element : access.elements(context)) {
+                ContextEntry inherited = find(parentContext, element);
+                ContextEntry entry = inherited != null ? inherited : access.describe(element);
+                if (entry == null) continue;
+                entries.add(entry);
+                if (inherited == null && entry.kind == Wire.CTX_NAME) def.name = entry.value;
+            }
+            node.context = entries.toArray(new ContextEntry[0]);
+            def.context = node.context;
+            node.defined = true;
+
+            TraceEvent launched = new TraceEvent(node.id, Wire.LAUNCHED, thread.id);
+            launched.node = def;
+            launched.stack = StackCapture.limit(stack, Tracer.config.stackDepth);
+            Tracer.emit(launched);
+            emitContextDiff(node, thread, parentContext);
+        } catch (Throwable e) {
+            Tracer.reportInternalError("continuationCreated", e);
+        } finally {
+            ts.inHook = false;
+        }
+    }
+
+    /**
+     * In {@code BaseContinuationImpl.resumeWith}, where the last frame of a coroutine hands the result to what the
+     * coroutine was started with. {@code frame} is where that run of the coroutine began, any frame of it.
+     */
+    public static void continuationCompleted(Object completion, Object result, Object frame) {
+        if (!Tracer.active) return;
+        ThreadState ts = ThreadState.current();
+        if (ts.inHook) return;
+        ts.inHook = true;
+        try {
+            KotlinAccess access = KotlinAccess.get();
+            if (access == null || JOBLESS.isEmpty() || access.job(access.contextOf(frame)) != null) return;
+            JobNode node = joblessNode(access, frame, completion);
+            if (node == null || node.finished) return;
+            node.finished = true;
+            ts.popUnit(node);
+            long thread = threadNode(ts).id;
+            // There is no Job, so there is no cancellation either: a CancellationException is an exception like any other.
+            Throwable failure = access.failureOfResult(result);
+            if (failure != null && !node.isRethrowOfReceived(failure)) {
+                TraceEvent thrown = new TraceEvent(node.id, Wire.EXCEPTION_THROWN, thread);
+                thrown.exception = Describe.exception(failure, true, Tracer.config.stackDepth);
+                Tracer.emit(thrown);
+            }
+            if (failure != null && node.rethrowsToId != 0) {
+                JobNode caller = node.rethrowsTo;
+                if (caller != null) caller.markReceived(failure);
+                TraceEvent propagated = new TraceEvent(node.rethrowsToId, Wire.EXCEPTION_PROPAGATED, thread);
+                propagated.otherNodeId = node.id;
+                propagated.direction = Wire.CHILD_TO_PARENT;
+                propagated.exception = Describe.exception(failure, false, 0);
+                Tracer.emit(propagated);
+            }
+            TraceEvent event = new TraceEvent(node.id, Wire.FINISHED, thread);
+            event.finalState = failure == null ? Wire.STATE_COMPLETED : Wire.STATE_FAILED;
+            Tracer.emit(event);
+        } catch (Throwable e) {
+            Tracer.reportInternalError("continuationCompleted", e);
+        } finally {
+            ts.inHook = false;
+        }
+    }
+
+    /**
+     * Down the chain of frames to the root frame of a jobless coroutine that is known. Compiled frames lead on with
+     * their completion. A frame that completes into something else is a root frame, ours or not; if not, there may
+     * still be a way on ({@code SafeCollector} of a flow is such a frame: it keeps its real caller to itself and says
+     * so as a {@code CoroutineStackFrame}). With {@code into}, only a coroutine that completes into it will do.
+     */
+    private static JobNode joblessNode(KotlinAccess access, Object frame, Object into) throws Throwable {
+        if (JOBLESS.isEmpty() || access.isGeneratorFrame(frame)) return null;
+        Object current = frame;
+        for (int steps = 0; current != null && steps < 10_000; steps++) {
+            Object next;
+            if (access.isCompiledFrame(current)) {
+                next = access.completionOf(current);
+                if (access.isCompiledFrame(next)) {
+                    current = next;
+                    continue;
+                }
+                if (into == null || into == next) {
+                    JobNode node = JOBLESS.get(current);
+                    if (node != null) return node;
+                }
+            }
+            next = access.callerOf(current);
+            if (next == current) return null;
+            current = next;
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------ coroutines: cancellation
@@ -763,7 +919,7 @@ public final class Hooks {
         try {
             ts.blockDepth++;
             if (reason == NOT_REPORTED || ts.blockEmittedAt != 0) return;
-            if (reason == Wire.BLOCK_PARK && isRuntimeHousekeeping(StackCapture.capture(4))) return;
+            if (reason == Wire.BLOCK_PARK && isRuntimeHousekeeping(StackCapture.capture(8))) return;
             ThreadNode thread = threadNode(ts);
             JobNode unit = ts.currentUnit();
             ts.blockEmittedAt = ts.blockDepth;
@@ -822,7 +978,8 @@ public final class Hooks {
      */
     private static boolean isRuntimeHousekeeping(StackFrameRef[] top) {
         for (StackFrameRef frame : top) {
-            if (frame.className.startsWith("java.util.concurrent.locks.")) continue;
+            // What counts is the method that parks, not the inline function whose code the call is.
+            if (frame.inlined || frame.className.startsWith("java.util.concurrent.locks.")) continue;
             return frame.className.startsWith("kotlinx.coroutines.");
         }
         return false;

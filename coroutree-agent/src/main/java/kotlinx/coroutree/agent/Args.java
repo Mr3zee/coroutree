@@ -8,7 +8,7 @@ import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.VarInsnNode;
 
-/** The values a hook call can be given. Each pushes exactly one value. */
+/** The values a hook call can be given. Each pushes exactly one value, {@link #callOperands} two. */
 final class Args {
     private Args() {}
 
@@ -53,5 +53,13 @@ final class Args {
             }
             code.add(new InsnNode(Opcodes.DUP));
         };
+    }
+
+    /**
+     * Receiver and argument of the call a {@link MethodPatch#beforeCall} hook precedes, which are the top of the stack
+     * at that point. Two values, both one slot wide; only as the first arguments of the hook.
+     */
+    static Arg callOperands() {
+        return (code, context, exitOpcode) -> code.add(new InsnNode(Opcodes.DUP2));
     }
 }

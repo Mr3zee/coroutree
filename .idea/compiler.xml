@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <bytecodeTargetLevel target="26" />
+  </component>
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="coroutree.coroutree-agent" options="-Xlint:all,-serial" />
+      <module name="coroutree.coroutree-agent.main" options="-Xlint:all,-serial" />
+      <module name="coroutree.coroutree-agent.runtime" options="-Xlint:all,-serial -XDstringConcat=inline" />
+      <module name="coroutree.coroutree-agent.test" options="-Xlint:all,-serial" />
+    </option>
+  </component>
+</project>

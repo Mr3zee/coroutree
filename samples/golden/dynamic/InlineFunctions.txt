@@ -1,0 +1,28 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ InlineFunctions.kt:19 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at InlineFunctions.kt:20
+    - resumed
+    - suspended at InlineFunctions.kt:34
+    - resumed
+    - suspended at InlineFunctions.kt:39
+    - resumed
+    - suspended at InlineFunctions.kt:25
+    - resumed
+    - completed
+    launch "direct" @ InlineFunctions.kt:29 [completed] {+CoroutineName: direct}
+      - resumed
+      - suspended at InlineFunctions.kt:20
+      - resumed
+      - completed
+    launch "nested" @ InlineFunctions.kt:29 [completed] {+CoroutineName: nested}
+      - resumed
+      - suspended at InlineFunctions.kt:34
+      - resumed
+      - completed
+    launch "unlocker" @ InlineFunctions.kt:24 [completed] {+CoroutineName: unlocker}
+      - resumed
+      - completed

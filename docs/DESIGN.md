@@ -4,9 +4,16 @@ A Gradle plugin that instruments Kotlin/JVM (and mixed Kotlin+Java) programs and
 **concurrency tree** in a standalone desktop GUI. Two modes: **static** (what may happen, without running)
 and **dynamic** (what did happen, in historical order, on a live or recorded run).
 
-Status: **M1 (dynamic vertical slice) is implemented**, M2–M5 are not started. §12 records what M1 built, where it
-refined or departed from the text below, and what it left open. Items marked **[assumed]** were decided by the author
+Status: **M1 (dynamic vertical slice) is implemented**, plus the two gaps it had left in §2.3 and §3 (source maps of inlined
+code, coroutines without a Job); **M1.1 (GUI correction: graph view) is next**; M2–M5 are not started. §12 records what M1
+built, where it refined or departed from the text below, and what it left open. Items marked **[assumed]** were decided by the author
 of this document without an explicit answer and need confirmation; M1 implemented the ones it touched as assumed.
+
+**Correction after M1.** Earlier versions of this document said "tree view" without saying what that looks like, and M1
+built an indented, expandable outline (a directory-like tree). What was meant is a **graph**: the concurrency tree drawn
+as a node-link diagram, with cross-links as real edges. The model is unaffected — it is still a tree with cross-links
+(§2) — only its presentation changes. §6 now says so explicitly, M1.1 (§9) builds it, and the text below is written for the
+graph throughout.
 
 ## 1. Decisions at a glance
 
@@ -15,14 +22,16 @@ of this document without an explicit answer and need confirmation; M1 implemente
 | Dynamic capture | Java agent attached by the Gradle plugin; load-time bytecode instrumentation |
 | Static analysis | Source-level: Kotlin Analysis API (K2, standalone) + Java PSI, lowered to one common IR |
 | Handle resolution | Full interprocedural points-to (custom, source-level) for Job/scope/Thread/Future/executor handles |
-| GUI | Compose Multiplatform Desktop, separate process, resolved and launched by the plugin |
+| GUI | Compose Multiplatform Desktop, separate process, resolved and launched by the plugin. The concurrency tree is drawn as a **top-down node-link graph**, not as an indented outline |
+| Graph layout | Own engine, no layout library: tidy-tree layout of the structural forest + orthogonal router that gives every edge its own track; pure geometry, deterministic |
+| Drawing invariant | **Strict:** nodes never overlap, lines never run on or touch each other or pass through a node, labels cover nothing; enforced by tests (§6.2) |
 | Transport | Append-only trace file **and** live stream over a loopback socket (same frames) |
 | Tree edge | Structural parent (Job hierarchy / starting thread / STS owner); "launched from" is a cross-link |
 | Node model | Nodes = execution units with a lifetime; events are an ordered list on the node |
 | Overhead budget | Dev/debug tool, accuracy first; 2–10x slowdown in coroutine-heavy code is acceptable |
-| History UX | Tree + time scrubber + synchronized event log |
+| History UX | Graph + time scrubber + synchronized event log |
 | Static × dynamic | Overlay via shared source-site IDs |
-| Libraries | Opaque by default; built-in models for known primitives; include/exclude packages in DSL |
+| Libraries | Opaque by default; built-in models for known primitives; include/exclude packages in DSL; library-internal subtrees and pools are hidden in the GUI behind a toggle |
 | Diagnostics | Visualiser + lightweight warning badges; no build-failing check task |
 | Source navigation | Open in IDE only (no embedded source viewer) |
 | Trace bounds | Unbounded; user's responsibility |
@@ -93,7 +102,8 @@ class→source index the Gradle plugin embeds in the trace header; it matches st
 - Java structured: `StructuredTaskScope` (fork/join/shutdown/close), `ScopedValue.Carrier.run/call`, executors,
   `ForkJoinPool`, `CompletableFuture` async stages. Version-adaptive; silently off if the API shape isn't present.
 - Attribution: `StackWalker` on structural events; suspend/resume use continuation debug metadata (no stack walk).
-- Library filtering: everything is recorded, nodes tagged project/library by package; GUI collapses library-internal nodes by default.
+- Library filtering: everything is recorded, nodes tagged project/library by package; the GUI leaves library-internal subtrees
+  out of the graph unless "show library / pools" is switched on (§6.1).
 
 **[assumed]** Agent runtime that lives on the bootstrap class path is plain Java with zero dependencies (no kotlin-stdlib leakage into the app);
 the rest of the agent is shaded. Events go through a lock-free queue to a writer thread (itself excluded from capture).
@@ -122,10 +132,13 @@ Pipeline:
    `java.lang.Thread` (platform + virtual), `java.util.concurrent` (executors, FJP, CompletableFuture, locks/queues as blocking sites),
    `StructuredTaskScope`, `ScopedValue`. Other library calls are opaque leaves.
 4. **Tree construction** — roots are entry points: `main` functions, test methods, and user-configured entry points (DSL list / annotation).
-   Calls into project functions are followed and their subtree inlined at the call site; recursion and revisits collapse to a
-   "↻ see node X" reference. Functions with concurrency constructs never reached from a root are listed as **unrooted**.
+   Calls into project functions are followed and their subtree inlined at the call site; recursion and revisits are not inlined
+   again but become a **back edge** to the node X already built (a cross-link with its own style, §6.1 — not a placeholder node).
+   Functions with concurrency constructs never reached from a root are listed as **unrooted**.
 5. **Guard chain** on every node/event: stack of enclosing conditions between it and its parent — `if`/`when` branch with condition source text,
    loop ("0..n times"), try/catch/finally region, safe-call/elvis, preceding early return. No path-feasibility reasoning, no constant folding.
+   A node's guard chain is a property of getting from its parent to it, and the graph shows it there: as the label of the
+   parent → child edge (truncated, full chain in the tooltip and the details pane).
 6. **Points-to** — Andersen-style, interprocedural over project code, flow- and context-insensitive to start; allocation sites are
    node-creating constructs. Resolves receivers of `cancel`, `cancelAndJoin`, `cancelChildren`, `interrupt`, `shutdown(Now)`, `Future.cancel`,
    `join`, `await` → `cancels`/`interrupts`/`awaits` cross-links to target **nodes**. Genuinely unresolvable receivers
@@ -146,14 +159,63 @@ Filterable list in the GUI. No build failure.
 ## 6. GUI (Compose Multiplatform Desktop)
 
 - Opens: static model, recorded trace, live session (process picker over the session index), or static + trace overlay.
-- Tree view with node state, context-diff labels, guard badges (static), warning badges, cross-links on hover/selection.
-- Time scrubber replaying the tree to any moment; live = pinned to "now". Synchronized flat event log; selection is two-way.
+- **Graph view** of the concurrency tree (§6.1), subject to a strict drawing invariant (§6.2). There is no outline
+  (indented, expandable rows) anywhere in the GUI.
+- Details pane for the selected node (site, context and its diff, links, the node's events) and a synchronized flat event log.
+  Events live in these panes, not in the graph. Selection is two-way between graph, details and log; selecting an event that
+  names another node (*propagated to*, *cancelled by*) highlights both nodes and the edge between them.
+- Time scrubber replaying the graph to any moment; live = pinned to "now".
 - Search (name / file / exception type) and filters (node kind, event kind, thread, dispatcher, project-vs-library, time range).
-- Aggregation: nodes from the same site under the same parent collapse to `launch ×1000 Main.kt:12` with state counts, expandable.
+  A node that is filtered out is not in the graph.
 - Overlay: which "may happen" static items happened, hit counts, dynamic nodes static didn't predict.
-- Source attribution click → **open in IDE** (IntelliJ built-in localhost endpoint / `idea --line`; command template configurable).
-  Dynamic events show the full captured stack, each frame clickable.
-- Virtualized rendering for large trees.
+- Source attribution → **open in IDE** (IntelliJ built-in localhost endpoint / `idea --line`; command template configurable):
+  from the node (context action, tooltip) and from the details pane. Dynamic events show the full captured stack, each frame clickable.
+- Large traces are answered by pan / zoom, the minimap, the library toggle and filters. There is **no per-node collapse and no
+  same-site aggregation**; only what is in the viewport is drawn.
+
+### 6.1 The graph
+
+- **Layout.** A top-down node-link diagram of the structural forest: roots on top, side by side in creation order; children
+  below their parent, left to right in creation order. Position encodes hierarchy only; time belongs to the scrubber.
+- **Node.** A compact box: kind icon (thread / coroutine / scope / context change / task / pool), construct or name
+  (`launch "sms"`), one-word state, warning badge. The box is **coloured by the node's state** at the shown moment (§2.1);
+  kind is never encoded in colour. Source site, context diff and the thread it runs on are in the tooltip and the details pane.
+- **Structural edges** (parent → child) are solid. The children of one parent may share a trunk (one line leaves the parent and
+  branches, as in an org chart): it is one relation and reads as one shape.
+- **Cross-links** (§2.4) are drawn as real edges, each type with its own style, listed in a legend, each with a toolbar toggle.
+  Always drawn: `launchedFrom` (where the creator is not the structural parent), `cancels` / `interrupts`, `awaits` / `joins`,
+  `channel`, and the static mode's recursion back edges (§4.4). `runsOn` changes with every resume and every coroutine has one,
+  so it is drawn for the selected node only.
+- **Static mode.** A guard chain labels the parent → child edge it guards (§4.5); recursion and revisits are back edges (§4.4).
+- **Library noise.** Pools and library-internal subtrees (library origin with no project code anywhere below) are left out of
+  the graph unless "show library / pools" is on; it is off by default. When shown they are dimmed.
+- **Canvas.** Pan, zoom, zoom-to-fit, zoom-to-selection, and a minimap with the viewport rectangle.
+- **Change over time.** The graph holds exactly the nodes that exist at the shown moment, live or scrubbed. When that set
+  changes the layout is recomputed and boxes glide to their new places; the viewport stays anchored on the selection (without
+  one, on what was in view).
+- **Engine.** Our own, no layout library: a tidy-tree (Reingold–Tilford / Buchheim style) layout of the forest, and an orthogonal
+  edge router on top of it. The gaps between layers are horizontal channels, the gaps between sibling subtrees vertical ones;
+  every edge gets a track of its own in each channel it passes through and a channel is as wide as its tracks need, so
+  separation holds by construction. Layout and routing are pure geometry (no Compose types), deterministic for a given
+  snapshot, and live in the GUI's `view/` package with plain unit tests.
+
+### 6.2 Drawing invariant (strict)
+
+Every settled layout satisfies all of the following, whatever the trace:
+
+1. No two node boxes overlap or touch; there is a minimum gap between any two.
+2. No two lines share a segment, touch, or run closer to each other than a minimum gap — every line is recognisable as
+   a separate line along its whole length. The only exception is the shared trunk of one parent's structural edges (§6.1);
+   no other line may run on or touch that trunk.
+3. Lines may **cross**, but only at a single point, at 90°, and never at a bend of either line. The router minimises crossings.
+4. A line touches only its two endpoint boxes. It never passes through or under another box and keeps a minimum clearance from it.
+5. An edge label (cross-link type, guard text) covers no box, no other label and no line but its own; text that does not
+   fit is truncated, the rest is in the tooltip.
+
+The invariant is about settled layouts; during the glide of an animated reflow edges may be faded or re-routed per frame.
+It is **enforced by tests**: a checker over the engine's output (rectangles, segments, label boxes) asserts 1–5 for every
+sample in the corpus, the demo trace, and randomly generated forests with random cross-links (§10). A layout that cannot
+satisfy it is a bug in the engine, never something to tolerate or to fix by hand-tuning a case.
 
 ## 7. Gradle plugin
 
@@ -189,8 +251,14 @@ samples/                 corpus of small programs, one per construct/edge case
 
 - **M1** *(done, see §12)* Dynamic vertical slice: model + trace format; agent for coroutine launch/context/dispatcher/exception/cancellation/suspend and
   thread start/block/interrupt; Gradle wiring; GUI tree + event log + open-in-IDE on live and recorded traces.
-- **M2** Java extras (executors, STS, ScopedValue, virtual thread mount/pin); Flow/channels/bridges/custom context elements; scrubber;
-  search, filters, aggregation.
+  (The GUI tree it built is an outline; see the correction note at the top and M1.1.)
+- **M1.1** GUI correction: the graph view replaces the outline (§6.1, §6.2). Layout engine and orthogonal router with the
+  invariant checker and its tests; compact state-coloured nodes; pan / zoom / zoom-to-fit / zoom-to-selection and the minimap;
+  two-way selection with the details pane and the event log; open-in-IDE from the node; the always-drawn cross-links with
+  legend and per-type toggles, `runsOn` for the selection; "show library / pools" toggle; animated reflow as a live trace grows.
+  The outline (`TreePane`, `TreeRows`, expansion state) is deleted; the text `TreeRenderer` stays as the golden format.
+- **M2** Java extras (executors, STS, ScopedValue, virtual thread mount/pin); Flow/channels/bridges/custom context elements
+  (with the `channel` cross-link drawn in the graph); scrubber replaying the graph; search and filters over the graph.
 - **M3** Static: frontends, IR, primitive models, tree, guard chains, static suspension events.
 - **M4** Points-to + cancel/interrupt/await links; exception sources and propagation semantics; warning badges.
 - **M5** Static × dynamic overlay.
@@ -199,6 +267,11 @@ samples/                 corpus of small programs, one per construct/edge case
 
 Sample corpus with golden trees for both modes (same program → static golden + dynamic golden, which also tests the overlay);
 Gradle TestKit for plugin wiring; agent integration tests on the supported JDK; points-to unit tests on the IR.
+
+Graph drawing (decided, not assumed): the layout engine's output is checked against the drawing invariant (§6.2) by a geometry
+checker — on every sample of the corpus, on the demo trace, and on randomly generated forests with random cross-links (seeded,
+so a failure is reproducible), including wide fan-outs, deep chains and dense cross-links. Screenshot renders remain, for a human
+to look at; they are not what enforces the invariant.
 
 ## 11. Risks and open questions
 
@@ -222,6 +295,10 @@ Gradle TestKit for plugin wiring; agent integration tests on the supported JDK; 
    unnamed code draws a native-access warning and is announced to be blocked one day, so the Gradle plugin unpacks the probe and passes it as
    `-agentpath:` after all; `System.load` remains the fallback for an agent attached by hand.
 8. Open-in-IDE only means traces viewed on a machine without the checkout have dead links (accepted).
+9. Graph size. With no collapse and no aggregation, a wide fan-out (`repeat(1000) { launch {} }`) is a very wide graph, and every
+   cross-link needs a track of its own, so dense cross-links widen the channels. **Accepted**; the answers are pan / zoom, the
+   minimap, the library toggle and filters. What has to be watched is the engine's cost: layout and routing run again whenever the
+   node set changes in a live session, so they must stay fast (and if needed incremental) on traces of 10^4 nodes.
 
 ## 12. M1 as built
 
@@ -244,20 +321,31 @@ README.md says how to try it. The trace format is specified in [TRACE_FORMAT.md]
 | §11.7 monitor contention | JVMTI, `coroutree-agent/src/native/coroutree_monitor.c`: `MonitorContendedEnter/Entered` call `Hooks.blockEnter(MONITOR)` / `blockExit()` on the contending thread, so a contended `synchronized` is a `THREAD_BLOCKED` like any other — same sequence, same nesting rules, same attribution to the coroutine running on the thread. The binaries travel in the agent jar (`kotlinx/coroutree/agent/native/<platform>/`); the plugin passes the host's as `-agentpath:`, a hand-attached agent loads it with `System.load`; `monitor=false` turns it off. Contention on the JVM's own monitors (class loading and initialization) is reported too: it is blocking, and the stack says what it is. |
 | §3 live stream | The writer thread writes the file and nothing else. Each live client gets a thread that reads the trace file back from its first byte and follows it as it grows, so a late joiner and a slow reader are the same ordinary case and neither can stall the capture. On shutdown clients get up to 3 s to receive the end. |
 | §3 ordering | `seq` is dense; the writer sorts each batch and readers restore the exact order by waiting for predecessors. Stack frames are interned (`StackFrameDef`). |
+| §3 jobless coroutines | Built after M1. A coroutine whose context has no Job (`suspend fun main` before it enters a scope, bare `startCoroutine` / `createCoroutine`) is a `Coroutine` node, created at the end of the standard library's `createCoroutineUnintercepted` and finished where `BaseContinuationImpl.resumeWith` hands the result to what the coroutine was started with. It is keyed by its **root frame** (the continuation `createCoroutineUnintercepted` returns), not by the root completion as §3 says: one completion object may serve any number of coroutines, the root frame is the coroutine. A probe's frame finds it by walking completions (and `CoroutineStackFrame.callerFrame` where a frame such as a flow's `SafeCollector` keeps its caller to itself). `suspend fun main` hangs off its thread like `runBlocking` and rethrows to it; anything else is a root, *launched from* its creator. No Job means no cancellation: a `CancellationException` out of such a coroutine is a failure. **Generators stay hidden**: a coroutine whose root frame is restricted (`sequence`, `iterator`, `DeepRecursiveFunction`) suspends at every `yield` to hand a value to the code that resumes it, synchronously; that is a return, not an event. The runtime's access to Kotlin is in two parts so that a program without kotlinx.coroutines is traced too. |
+| §2.3 inlined code | Built after M1. The transformer hands the `SourceDebugExtension` (SMAP) of every project class to the runtime (`SourceMaps`), which turns a JVM frame at a line of inlined code into **two logical frames**: the body (`inlined`: declaring class, file and line of the inline function, from the `Kotlin` stratum) and the call site (the JVM frame with the line of the inline call, from `KotlinDebug`). Every stack goes through it: captured, exception, and the debug-metadata stacks of suspension points, which carry the same synthetic lines. The site rule needs no change and gives the right answer for both cases: a construct in a project's inline function has its site in that function, one in a library's inline function (`mutex.withLock {}`) at the project's call. A lambda handed to a `crossinline` parameter is compiled into a copy of the inline function's anonymous class and numbered synthetically as well, contrary to the rule of thumb that lambda bodies keep their lines; it has no call site and stays one frame. The SMAP is read for every class that is loaded outside the JDK, libraries included (an attribute-only pass; project classes are parsed anyway). What the SMAP does not say is read from the compiler's `$i$f$` / `$i$a$` marker variables, for project classes: the inline function's name, and, through several levels of inlining, the functions in between with the lines of their calls (the line in force right before a marker's span; spans that a suspension point cut in pieces are one call). `suspend fun main` gets its line the same way, from the class file: the synthetic `main(String[])` that creates the coroutine has no line numbers, so its frames take the first line of the real `main`. |
 | §7 plugin | `enabled` defaults to "`-Pcoroutree` is present". The plugin also passes `-Xshare:off`: appending to the bootstrap class path disables application CDS anyway and the JVM warns about it on every start. `entryPoints {}` is not in the DSL until M3 gives it a meaning. |
+| §6 GUI | **Superseded by M1.1.** M1 read "tree view" as an outline: indented rows that expand and collapse, pools and library-internal subtrees closed by default, cross-links as chips on the hovered or selected row, source site and context diff on the row. That was a misreading of an underspecified §6, not a decision; §6 now specifies the graph and M1.1 replaces the outline with it. What M1 built around it stays: the details pane, the event log, two-way selection, open-in-IDE, feeds and sessions, the start screen. |
 | §7 GUI artifact | As designed (classifier per OS: `macos-arm64`, `macos-x64`, `linux-x64`, `linux-arm64`, `windows-x64`), launched detached with `--dir build/coroutree --open-latest`. A composite build may instead point `coroutreeGui` at the GUI project. |
 | §10 testing | As assumed, for the dynamic half: golden trees per sample, TestKit for the plugin, forked-JVM agent tests on the toolchain JDK, plus: three kotlinx.coroutines versions, a fake unsupported one, the live stream, the GUI's feed against a live agent, and a corpus-coverage test that fails when any event kind stops occurring. The agent was also smoke-tested by hand on JDK 21 and 24. |
 
 ### Known gaps, candidates for M2
 
-- **Jobless continuations** (`suspend fun main` before it enters a scope, `sequence {}`, raw `startCoroutine`) are ignored, contrary to §3
-  ("keyed by the root completion identity"). Everything launched from them is traced.
-- **SMAP is not read** (§2.3): a construct inside a user-declared `inline` function reports the inlined line number.
+The two that mattered most for M5, jobless continuations and unread source maps, were closed after M1; the rows on §3 and §2.3
+above say how, the first two items here what remains of them.
+
+- **Jobless coroutines, what is left.** A coroutine that is started by hand with `startCoroutineUninterceptedOrReturn` and a
+  completion of its own is not created by `createCoroutineUnintercepted` and stays unseen (the function is inline, there is no
+  one place to hook). Generators are hidden on purpose (see the table above).
+- **Inlined code, what is left.** The inline functions between the innermost and the outermost are known for project classes
+  only: they take reading the code, and other classes are only looked at for their source map. They are also a reading of
+  compiler conventions (marker variables, which line is in force where a marker's span begins), not of a specification; a
+  class compiled without local variable tables has the two frames the source map gives and no function names.
 - **The monitor probe is built for the platform of the build only** (on macOS as a universal binary; Linux needs `cc`; Windows is not
   scripted). A release has to build it on each platform and merge with `-Pcoroutree.prebuiltNatives=<dir>`; only macOS arm64 has been run.
   Where the agent jar has no binary for the platform it says so once and everything but the `MONITOR` reason works.
 - Executor threads are plain threads started as a side effect (origin *library*); `Task` nodes and executor pools are M2 as planned.
 - One copy of kotlinx.coroutines per JVM is traced (the first seen); a second copy in another class loader is ignored.
+- **The GUI shows an outline, not the graph** of §6 — not a candidate for M2 but the whole of M1.1 (§9).
 - The GUI reads a recorded file once; it does not tail a file that is still being written (it follows live sessions through the socket).
 - Project isolation: traces go to the *root* project's build directory, which the plugin reads from each project.
 - Plugin: dependency source indexes are looked up on the conventionally named runtime classpaths, so a KMP target declared as

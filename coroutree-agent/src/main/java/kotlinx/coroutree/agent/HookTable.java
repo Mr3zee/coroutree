@@ -9,18 +9,20 @@ import java.util.Map;
 
 import static kotlinx.coroutree.agent.Args.arg;
 import static kotlinx.coroutree.agent.Args.call;
+import static kotlinx.coroutree.agent.Args.callOperands;
 import static kotlinx.coroutree.agent.Args.constant;
 import static kotlinx.coroutree.agent.Args.field;
 import static kotlinx.coroutree.agent.Args.returnValue;
 import static kotlinx.coroutree.agent.Args.self;
 import static kotlinx.coroutree.agent.MethodPatch.around;
+import static kotlinx.coroutree.agent.MethodPatch.beforeCall;
 import static kotlinx.coroutree.agent.MethodPatch.enter;
 import static kotlinx.coroutree.agent.MethodPatch.enterAndExit;
 import static kotlinx.coroutree.agent.MethodPatch.exit;
 
 /**
- * Which method of which class calls which hook. This is the whole coupling of the agent to the internals of the JDK
- * and of kotlinx.coroutines, in one place.
+ * Which method of which class calls which hook. This is the whole coupling of the agent to the internals of the JDK,
+ * of the Kotlin standard library's coroutine machinery and of kotlinx.coroutines, in one place.
  *
  * kotlinx.coroutines entries name private and internal members. They were checked against the versions listed in
  * {@link #TESTED_COROUTINES}; with any version, a required method that is not found is reported as an error in the
@@ -37,6 +39,7 @@ final class HookTable {
     private static final String THROWABLE = "Ljava/lang/Throwable;";
     private static final String THREAD = "Ljava/lang/Thread;";
     private static final String CONTEXT = "Lkotlin/coroutines/CoroutineContext;";
+    private static final String CONTINUATION = "Lkotlin/coroutines/Continuation;";
 
     private final Map<String, ClassPatch> patches = new HashMap<>();
 
@@ -63,8 +66,19 @@ final class HookTable {
         HookCall resumed = new HookCall("coroutineResumed", "(" + OBJECT + OBJECT + ")V", arg(0), contextOf(arg(0)));
         HookCall suspended = new HookCall("coroutineSuspended", "(" + OBJECT + OBJECT + ")V", arg(0), contextOf(arg(0)));
         on("kotlin/coroutines/jvm/internal/DebugProbesKt")
-            .method(enter("probeCoroutineResumed", "(Lkotlin/coroutines/Continuation;)V", resumed))
-            .method(enter("probeCoroutineSuspended", "(Lkotlin/coroutines/Continuation;)V", suspended));
+            .method(enter("probeCoroutineResumed", "(" + CONTINUATION + ")V", resumed))
+            .method(enter("probeCoroutineSuspended", "(" + CONTINUATION + ")V", suspended));
+
+        // Coroutines without a Job (suspend fun main, startCoroutine, createCoroutine). Every coroutine is created by one
+        // of the two createCoroutineUnintercepted, and ends where its last frame resumes what it was started with.
+        String function1 = "Lkotlin/jvm/functions/Function1;", function2 = "Lkotlin/jvm/functions/Function2;";
+        HookCall created = new HookCall("continuationCreated", "(" + OBJECT + ")V", returnValue());
+        on("kotlin/coroutines/intrinsics/IntrinsicsKt__IntrinsicsJvmKt")
+            .method(exit("createCoroutineUnintercepted", "(" + function1 + CONTINUATION + ")" + CONTINUATION, created))
+            .method(exit("createCoroutineUnintercepted", "(" + function2 + OBJECT + CONTINUATION + ")" + CONTINUATION, created));
+        on("kotlin/coroutines/jvm/internal/BaseContinuationImpl")
+            .method(beforeCall("resumeWith", "(" + OBJECT + ")V", "kotlin/coroutines/Continuation", "resumeWith", "(" + OBJECT + ")V",
+                new HookCall("continuationCompleted", "(" + OBJECT + OBJECT + OBJECT + ")V", callOperands(), self())));
 
         // Structure: every coroutine, scope and withContext is an AbstractCoroutine; Job() and friends are JobImpl.
         on("kotlinx/coroutines/AbstractCoroutine")

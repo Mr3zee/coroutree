@@ -172,6 +172,7 @@ public final class TraceEncoder {
         def.string(3, ref.methodName);
         def.string(4, ref.fileName);
         def.int32(5, ref.line);
+        def.bool(6, ref.inlined);
         frame.endMessage(3, def);
         flushFrame();
         return id;

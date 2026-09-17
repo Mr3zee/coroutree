@@ -91,6 +91,11 @@ public data class StackFrameDef(
     @ProtoNumber(3) val methodName: String = "",
     @ProtoNumber(4) val fileName: String = "",
     @ProtoNumber(5) val line: Int = 0,
+    /**
+     * The body of an inline function, which runs as part of the method of the frame that follows it in a stack.
+     * [className] is the class that declares the function, [methodName] the function, empty when the agent could not tell.
+     */
+    @ProtoNumber(6) val inlined: Boolean = false,
 )
 
 /** Something the agent wants the user to know about the capture itself (e.g. an unsupported library version). */

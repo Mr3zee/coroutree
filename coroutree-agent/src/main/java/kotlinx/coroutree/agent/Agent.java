@@ -3,6 +3,14 @@ package kotlinx.coroutree.agent;
 import kotlinx.coroutree.runtime.AgentConfig;
 import kotlinx.coroutree.runtime.Tracer;
 import kotlinx.coroutree.runtime.Wire;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.LabelNode;
+import org.objectweb.asm.tree.LineNumberNode;
+import org.objectweb.asm.tree.LocalVariableNode;
+import org.objectweb.asm.tree.MethodNode;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,11 +43,36 @@ final class Agent {
     private static void warmUp(CoroutreeTransformer transformer, HookTable table) throws IOException {
         String sample = "java/lang/Thread";
         try (InputStream in = ClassLoader.getSystemResourceAsStream(sample + ".class")) {
-            if (in == null) return;
-            byte[] bytes = in.readAllBytes();
-            transformer.rewrite(null, sample, table.get(sample), false, bytes);
-            transformer.rewrite(null, sample, null, true, bytes);
+            if (in != null) {
+                byte[] bytes = in.readAllBytes();
+                transformer.rewrite(null, sample, table.get(sample), false, bytes);
+                transformer.rewrite(null, sample, null, true, bytes);
+                CoroutreeTransformer.readSourceMap(sample, bytes);
+            }
         }
+        // No class of the JDK has a source map of inlined Kotlin code, or a suspend fun main. This one goes all the way
+        // through both readers and leaves nothing behind: its map maps a line to itself, its main is on no line.
+        ClassNode inlined = new ClassNode();
+        inlined.version = Opcodes.V17;
+        inlined.name = "kotlinx/coroutree/agent/WarmUp";
+        inlined.superName = "java/lang/Object";
+        String[][] methods = {{"warmUp", "()V", "1"}, {"main", "(Lkotlin/coroutines/Continuation;)Ljava/lang/Object;", "0"}};
+        for (String[] signature : methods) {
+            MethodNode method = new MethodNode(Opcodes.ACC_STATIC, signature[0], signature[1], null, null);
+            LabelNode start = new LabelNode(), end = new LabelNode();
+            method.instructions.add(start);
+            method.instructions.add(new LineNumberNode(Integer.parseInt(signature[2]), start));
+            method.instructions.add(new InsnNode(Opcodes.NOP));
+            method.instructions.add(end);
+            method.localVariables.add(new LocalVariableNode("$i$f$warmUp", "I", null, start, end, 0));
+            inlined.methods.add(method);
+        }
+        String file = "+ 1 WarmUp.kt\n" + inlined.name + "\n*L\n1#1:1\n";
+        inlined.sourceDebug = "SMAP\nWarmUp.kt\nKotlin\n*S Kotlin\n*F\n" + file + "*S KotlinDebug\n*F\n" + file + "*E\n";
+        CoroutreeTransformer.readSourceMap(inlined);
+        ClassWriter writer = new ClassWriter(0);
+        inlined.accept(writer);
+        CoroutreeTransformer.readSourceMap(inlined.name, writer.toByteArray());
     }
 
     /** The JDK classes in the table were loaded long before the agent; kotlin and kotlinx classes normally were not. */

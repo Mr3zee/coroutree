@@ -12,7 +12,10 @@ final class StackCapture {
 
     private StackCapture() {}
 
-    /** The current stack without the agent's own frames, innermost first, at most {@code limit} frames. */
+    /**
+     * The current stack without the agent's own frames, innermost first, at most {@code limit} frames. Inlined code
+     * appears where it was written, in a frame of its own, see {@link SourceMaps}.
+     */
     static StackFrameRef[] capture(final int limit) {
         return WALKER.walk(new Function<Stream<StackWalker.StackFrame>, StackFrameRef[]>() {
             @Override
@@ -23,9 +26,9 @@ final class StackCapture {
                     StackWalker.StackFrame frame = iterator.next();
                     String className = frame.getClassName();
                     if (result.isEmpty() && className.startsWith(RUNTIME_PACKAGE)) continue;
-                    result.add(new StackFrameRef(className, frame.getMethodName(), frame.getFileName(), frame.getLineNumber()));
+                    SourceMaps.add(result, className, frame.getMethodName(), frame.getFileName(), frame.getLineNumber());
                 }
-                return result.toArray(new StackFrameRef[0]);
+                return limit(result.toArray(new StackFrameRef[0]), limit);
             }
         });
     }
@@ -39,6 +42,8 @@ final class StackCapture {
     }
 
     private static final int SITE_SEARCH_DEPTH = 64;
+
+    static final String SUSPEND_MAIN = "suspend fun main";
 
     static StackFrameRef[] limit(StackFrameRef[] stack, int limit) {
         return stack.length <= limit ? stack : java.util.Arrays.copyOf(stack, limit);
@@ -61,12 +66,16 @@ final class StackCapture {
      */
     static String construct(StackFrameRef[] stack, int siteIndex, String fallback) {
         int api = siteIndex < 0 ? stack.length - 1 : siteIndex - 1;
+        // A library's inline function between the site and the API it calls, if its name is not known, is no name to go by.
+        while (api >= 0 && stack[api].methodName.isEmpty()) api--;
         if (api < 0) return fallback;
         StackFrameRef frame = stack[api];
         String method = frame.methodName;
         if (method.endsWith("$default")) method = method.substring(0, method.length() - "$default".length());
         if (method.equals("<init>")) return fallback;
         if (frame.className.startsWith("kotlin")) {
+            // What the compiler turns `suspend fun main` into: a plain main that hands the real one to runSuspend.
+            if (method.equals("runSuspend") && frame.className.equals("kotlin.coroutines.jvm.internal.RunSuspendKt")) return SUSPEND_MAIN;
             // The name in the source, where @JvmName gave the function another one in bytecode.
             if (method.equals("runBlockingK")) method = "runBlocking";
             // Kotlin names factory functions like the type they return: Job(), SupervisorJob(), CoroutineScope().
@@ -88,7 +97,7 @@ final class StackCapture {
     static boolean startedDirectlyBySite(StackFrameRef[] stack, int siteIndex) {
         if (siteIndex <= 0) return false;
         for (int i = 0; i < siteIndex; i++) {
-            if (!isThreadStartFrame(stack[i])) return false;
+            if (!stack[i].inlined && !isThreadStartFrame(stack[i])) return false; // inlined into a thread-starting API: part of it
         }
         return true;
     }

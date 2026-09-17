@@ -1,11 +1,19 @@
 package kotlinx.coroutree.agent;
 
 import kotlinx.coroutree.runtime.AgentConfig;
+import kotlinx.coroutree.runtime.SourceMaps;
 import kotlinx.coroutree.runtime.Tracer;
 import kotlinx.coroutree.runtime.Wire;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.LineNumberNode;
+import org.objectweb.asm.tree.MethodNode;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -29,8 +37,12 @@ final class CoroutreeTransformer implements ClassFileTransformer {
         ClassPatch patch = table.get(className);
         // Project classes come from an application class loader; the bootstrap loader (null) never holds them.
         boolean project = loader != null && config.isProjectClassInternalName(className);
-        if (patch == null && !project) return null;
         try {
+            if (patch == null && !project) {
+                // Nothing to change, but any class may be in a stack, and a Kotlin one with inlined code in it.
+                if (loader != null && !isJdkOrAgent(className)) readSourceMap(className, bytes);
+                return null;
+            }
             if (patch != null && patch.changesShape() && classBeingRedefined != null) {
                 // Cannot add a field to a loaded class. Only happens if the agent is attached to a running JVM.
                 Tracer.diagnostic(Wire.ERROR, className.replace('/', '.') + " was loaded before the agent; coroutines will not be traced");
@@ -58,12 +70,65 @@ final class CoroutreeTransformer implements ClassFileTransformer {
                     + ". The trace will be incomplete or wrong.");
             }
         }
+        // Before the class changes. Not that hooks have lines, but this is about the class as it was compiled.
+        readSourceMap(node);
         if (project) changed |= CatchPatch.apply(node);
         if (!changed) return null;
         // Only max stack and locals are recomputed; see MethodPatch for why frames are not.
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         return writer.toByteArray();
+    }
+
+    private static final String SUSPEND_MAIN_TAIL = "Lkotlin/coroutines/Continuation;)Ljava/lang/Object;";
+
+    /** What {@link SourceMaps} wants to know of a class, from its tree: all of it. */
+    static void readSourceMap(ClassNode node) {
+        String className = node.name.replace('/', '.');
+        if (node.sourceDebug != null) SourceMaps.register(className, node.sourceDebug, InlinedCalls.of(node));
+        for (MethodNode method : node.methods) {
+            if (!method.name.equals("main") || !method.desc.endsWith(SUSPEND_MAIN_TAIL)) continue;
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof LineNumberNode line) {
+                    SourceMaps.registerSuspendMain(className, line.line);
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * The same of a class that is otherwise left alone, without reading its code: the source map is an attribute, and
+     * a reader skips the code of every method it gets no visitor for. Minus the inline calls between the innermost
+     * and the outermost, which take the code.
+     */
+    static void readSourceMap(String className, byte[] bytes) {
+        String name = className.replace('/', '.');
+        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public void visitSource(String source, String debug) {
+                if (debug != null) SourceMaps.register(name, debug, null);
+            }
+
+            @Override
+            public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature, String[] exceptions) {
+                if (!methodName.equals("main") || !descriptor.endsWith(SUSPEND_MAIN_TAIL)) return null;
+                return new MethodVisitor(Opcodes.ASM9) {
+                    private boolean seen;
+
+                    @Override
+                    public void visitLineNumber(int line, Label start) {
+                        if (!seen) SourceMaps.registerSuspendMain(name, line);
+                        seen = true;
+                    }
+                };
+            }
+        }, ClassReader.SKIP_FRAMES);
+    }
+
+    private static boolean isJdkOrAgent(String internalName) {
+        return internalName.startsWith("java/") || internalName.startsWith("javax/") || internalName.startsWith("jdk/")
+            || internalName.startsWith("sun/") || internalName.startsWith("com/sun/") || internalName.startsWith("kotlinx/coroutree/");
     }
 
     private static void checkCoroutinesVersion(ClassLoader loader) {

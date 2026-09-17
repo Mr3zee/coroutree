@@ -38,9 +38,15 @@ public val StackFrameDef.shortLocation: String
         else -> fileName
     }
 
-/** `com.acme.MainKt.main(Main.kt:12)`, the way the JVM prints it. */
+/**
+ * `com.acme.MainKt.main(Main.kt:12)`, the way the JVM prints it; `inline com.acme.UtilKt.retry(Util.kt:7)` for the
+ * body of an inline function, which the JVM does not know of.
+ */
 public val StackFrameDef.qualified: String
-    get() = "$className.$methodName(${shortLocation.ifEmpty { "Unknown Source" }})"
+    get() {
+        val location = shortLocation.ifEmpty { "Unknown Source" }
+        return if (inlined) "inline $className${if (methodName.isEmpty()) "" else ".$methodName"}($location)" else "$className.$methodName($location)"
+    }
 
 public val ExceptionInfo.simpleName: String get() = className.substringAfterLast('.')
 
