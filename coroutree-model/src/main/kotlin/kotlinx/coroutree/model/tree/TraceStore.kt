@@ -7,6 +7,7 @@ import kotlinx.coroutree.model.EventKind
 import kotlinx.coroutree.model.Frame
 import kotlinx.coroutree.model.NodeInfo
 import kotlinx.coroutree.model.NodeState
+import kotlinx.coroutree.model.PaceDef
 import kotlinx.coroutree.model.StackFrameDef
 import kotlinx.coroutree.model.TraceHeader
 import kotlinx.coroutree.model.TraceReader
@@ -57,6 +58,8 @@ public class TraceStore {
     private var frameCount = 1
     private val diagnostics = AppendLog<Diagnostic>()
     private var complete = false
+    private val paceChanges = AppendLog<PaceDef>()
+    private var pace = PaceState.NONE
 
     // Frames of concurrent threads reach the file slightly out of order; sequence numbers are dense, so the
     // historical order is restored exactly by holding events back until their predecessors have arrived.
@@ -76,6 +79,7 @@ public class TraceStore {
         frame.stackFrame?.let(::defineFrame)
         frame.diagnostic?.let(diagnostics::add)
         frame.event?.let(::enqueue)
+        frame.pace?.let(::applyPace)
     }
 
     /** No more frames will come: releases events still held back behind a gap in the sequence. */
@@ -94,8 +98,18 @@ public class TraceStore {
             publishedNodes = updated
         }
         val rootIds = if (formerRoots.isEmpty()) roots.view() else roots.view().filter { it !in formerRoots }
-        return TraceSnapshot(header, publishedNodes, rootIds, events.view(), diagnostics.view(), frames.view(), sources, complete)
+        return TraceSnapshot(header, publishedNodes, rootIds, events.view(), diagnostics.view(), frames.view(), sources, complete, paceChanges.view(), pace)
             .also { published = it }
+    }
+
+    private fun applyPace(def: PaceDef) {
+        paceChanges.add(def)
+        val setting = PaceSetting(def.intervalNanos, def.paused)
+        pace = when {
+            def.scopeNodeId == 0L -> pace.copy(global = setting)
+            def.dropped -> pace.copy(nodes = pace.nodes - def.scopeNodeId)
+            else -> pace.copy(nodes = pace.nodes + (def.scopeNodeId to setting))
+        }
     }
 
     private fun defineFrame(def: StackFrameDef) {

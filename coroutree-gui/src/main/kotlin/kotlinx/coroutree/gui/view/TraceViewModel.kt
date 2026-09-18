@@ -10,7 +10,9 @@ import kotlinx.coroutree.gui.view.graph.GraphLayout
 import kotlinx.coroutree.gui.view.graph.GraphLink
 import kotlinx.coroutree.gui.view.graph.LayoutEngine
 import kotlinx.coroutree.model.Event
+import kotlinx.coroutree.model.PaceDef
 import kotlinx.coroutree.model.tree.NodeSnapshot
+import kotlinx.coroutree.model.tree.PaceSetting
 import kotlinx.coroutree.model.tree.TraceSnapshot
 
 /** A request to bring something into view. [ticket] makes two requests for the same target distinct. */
@@ -82,6 +84,64 @@ class TraceViewModel {
         GraphHighlight(setOf(a, b), structural, links)
     }
 
+    // ------------------------------------------------------------------ execution control (DESIGN §3.1)
+
+    /**
+     * The way to the agent's gate, set by whoever owns the feed while it follows a running JVM; `null` for a recorded
+     * trace or a session that has ended.
+     */
+    var commands: ((PaceCommand) -> Unit)? by mutableStateOf(null)
+
+    /** Whether the program can be slowed down, paused and stepped from here: a running JVM, and one that has a gate. */
+    val paceable: Boolean by derivedStateOf { commands != null && snapshot.header?.paceable == true && !snapshot.complete }
+
+    /**
+     * The global setting **as read back from the stream**, not as last clicked: that is what is in force, and what a
+     * second GUI on the same JVM sees too. `null` until the trace has said anything about a gate.
+     */
+    val globalPace: PaceSetting? by derivedStateOf { snapshot.pace.global }
+
+    /** The session was configured to start paused and nobody has taken over yet: what the banner says. */
+    val pausedAtStart: Boolean by derivedStateOf {
+        snapshot.pace.global?.paused == true && snapshot.paceChanges.lastOrNull { it.scopeNodeId == 0L }?.reason == PaceDef.Reason.CONFIG
+    }
+
+    val eventLog: EventLogItems by derivedStateOf { EventLogItems(snapshot.events, snapshot.paceChanges) }
+
+    /** The setting [nodeId] carries for its subtree, `null` while it goes by its parent's. */
+    fun ownPace(nodeId: Long): PaceSetting? = snapshot.pace.nodes[nodeId]
+
+    /** What holds for [nodeId]: the innermost setting on its way to the root, else the global one. */
+    fun governingPace(nodeId: Long): PaceSetting? = snapshot.pace.governing(nodeId) { snapshot.node(it)?.info?.parentId }
+
+    fun send(command: PaceCommand) {
+        if (paceable) commands?.invoke(command)
+    }
+
+    /** Pause if it runs, resume if it is paused: the whole program, or the subtree of [node]. */
+    fun togglePause(node: Long = 0) {
+        val paused = (if (node == 0L) globalPace else governingPace(node))?.paused == true
+        send(if (paused) PaceCommand.Resume(node) else PaceCommand.Pause(node))
+    }
+
+    fun step(node: Long = 0, count: Int = 1) = send(PaceCommand.Step(count, node))
+
+    fun setPace(intervalNanos: Long, node: Long = 0) = send(PaceCommand.SetPace(intervalNanos, node))
+
+    fun inherit(node: Long) = send(PaceCommand.Inherit(node))
+
+    /** Space pauses and resumes, → steps. `false`: not ours, or nothing to control. */
+    fun handleKey(key: ControlKey): Boolean {
+        if (!paceable) return false
+        when (key) {
+            ControlKey.PAUSE_RESUME -> togglePause()
+            ControlKey.STEP -> step()
+        }
+        return true
+    }
+
+    enum class ControlKey { PAUSE_RESUME, STEP }
+
     fun toggleLinks(kind: EdgeKind) {
         options = options.copy(linkKinds = if (kind in options.linkKinds) options.linkKinds - kind else options.linkKinds + kind)
     }
@@ -127,6 +187,9 @@ class TraceViewModel {
         val id = selectedNodeId ?: return false
         return event.nodeId == id || event.otherNodeId == id
     }
+
+    /** Position in the event log of the event with [seq] (the log has the changes of the gate's settings in it too), or -1. */
+    fun logIndex(seq: Long): Int = eventLog.positionOfEvent(eventIndex(seq))
 
     /** Position of the event with [seq] in the log, or -1. Sequence numbers ascend but may have gaps. */
     fun eventIndex(seq: Long): Int = snapshot.events.binarySearch { it.seq.compareTo(seq) }.coerceAtLeast(-1)

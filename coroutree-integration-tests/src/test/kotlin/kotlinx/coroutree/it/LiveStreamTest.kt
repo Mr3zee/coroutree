@@ -93,10 +93,4 @@ class LiveStreamTest {
         }
         fail("Timed out waiting for $what")
     }
-
-    /** Value of a top-level scalar field of the flat JSON object the agent writes. */
-    private fun String.jsonValue(key: String): String {
-        val match = Regex("\"" + Regex.escape(key) + "\":(\"((?:[^\"\\\\]|\\\\.)*)\"|[^,}]+)").find(this) ?: fail("no \"$key\" in $this")
-        return (match.groups[2]?.value ?: match.groupValues[1]).replace("\\\\", "\\").replace("\\\"", "\"")
-    }
 }

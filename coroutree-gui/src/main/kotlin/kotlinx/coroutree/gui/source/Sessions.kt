@@ -18,6 +18,8 @@ data class SessionInfo(
     val command: String,
     val startedAt: Long,
     val ended: Boolean,
+    /** The JVM has a gate: it can be slowed down, paused and stepped over this session. Older agents never say so. */
+    val paceable: Boolean = false,
 ) {
     val title: String get() = listOf(taskPath, command).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "pid $pid" }
 
@@ -57,6 +59,7 @@ data class SessionInfo(
                 command = string("command"),
                 startedAt = long("startedAt"),
                 ended = json["ended"] == true,
+                paceable = json["paceable"] == true,
             )
         }
 

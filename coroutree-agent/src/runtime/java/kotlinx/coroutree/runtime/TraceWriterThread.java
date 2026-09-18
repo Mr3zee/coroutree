@@ -31,8 +31,10 @@ final class TraceWriterThread extends AgentThread {
         }
 
         // Diagnostics carry no number; sorting them first keeps them near where they were enqueued.
+        // A setting of the gate goes behind the event it was made after (the sort is stable).
         private long seq(Object item) {
-            return item instanceof TraceEvent event ? event.seq : 0;
+            if (item instanceof TraceEvent event) return event.seq;
+            return item instanceof TraceEvent.PaceDef pace ? pace.afterSeq : 0;
         }
     };
 
@@ -41,12 +43,19 @@ final class TraceWriterThread extends AgentThread {
     private final OutputStream out;
     private final TraceEncoder encoder;
     private final ArrayList<Object> batch = new ArrayList<>();
+    /**
+     * For tests only ({@code -Dcoroutree.debug.writerFailsAfterMillis}): the writer fails that long after it started, the
+     * way it would on a full disk. What has to be seen then is a program that was paused going on.
+     */
+    private final long failsAtNanos;
     private volatile boolean stopping;
     private volatile boolean closed;
 
     TraceWriterThread(File file, AgentConfig config, long startedAtEpochMillis) throws IOException {
         super("coroutree-writer");
         this.file = file;
+        Long failsAfterMillis = Long.getLong("coroutree.debug.writerFailsAfterMillis");
+        this.failsAtNanos = failsAfterMillis == null ? Long.MAX_VALUE : System.nanoTime() + failsAfterMillis * 1_000_000;
         File parent = file.getParentFile();
         if (parent != null) parent.mkdirs();
         this.out = new BufferedOutputStream(new FileOutputStream(file), 1 << 16);
@@ -81,6 +90,7 @@ final class TraceWriterThread extends AgentThread {
         Throwable failure = null;
         try {
             while (true) {
+                if (System.nanoTime() >= failsAtNanos) throw new IOException("failure injected by coroutree.debug.writerFailsAfterMillis");
                 boolean stop = stopping; // read before draining: what was enqueued before the stop request gets written
                 if (drain()) {
                     park = MIN_PARK_NANOS;
@@ -114,6 +124,7 @@ final class TraceWriterThread extends AgentThread {
         batch.sort(BY_SEQ);
         for (Object item : batch) {
             if (item instanceof TraceEvent event) encoder.writeEvent(event);
+            else if (item instanceof TraceEvent.PaceDef pace) encoder.writePace(pace);
             else encoder.writeDiagnostic((TraceEvent.DiagnosticDef) item);
         }
         return true;

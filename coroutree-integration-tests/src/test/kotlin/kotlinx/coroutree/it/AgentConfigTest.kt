@@ -41,6 +41,10 @@ class AgentConfigTest {
             setProperty("include", "samples,com.acme")
             setProperty("exclude", "samples.generated")
             setProperty("stack.depth", "3")
+            // Execution control, as AgentArgumentProvider writes it.
+            setProperty("pace", "true")
+            setProperty("pace.paused", "false")
+            setProperty("pace.events.per.second", "unlimited")
         }.also { properties -> config.outputStream().use { properties.store(it, null) } }
 
         val process = ProcessBuilder(
@@ -81,6 +85,45 @@ class AgentConfigTest {
 
         assertTrue(snapshot.events.all { it.stack.size <= 3 }, "stack.depth limits captured stacks")
         assertEquals(emptyList(), snapshot.diagnostics)
+        assertEquals(false, header.paceable, "pace is on, but with live=false and no configured pace there is nothing a gate could do")
+    }
+
+    /**
+     * The agent's own order of precedence: what is written inline on -javaagent beats the properties file (which is
+     * where the Gradle plugin's DSL and -P properties end up). `config=` must not come first for the two to combine.
+     */
+    @Test
+    fun inlineOptionsBeatTheConfigFile() {
+        val dir = File(TestEnvironment.workDir, "InlineBeatsFile").apply { deleteRecursively(); mkdirs() }
+        val config = File(dir, "agent.properties")
+        Properties().apply {
+            setProperty("live", "false")
+            setProperty("include", "samples")
+            setProperty("pace", "true")
+            setProperty("pace.events.per.second", "0.5") // one event in two seconds: the run would take minutes
+        }.also { properties -> config.outputStream().use { properties.store(it, null) } }
+
+        fun run(name: String, inline: String): kotlinx.coroutree.model.tree.TraceSnapshot {
+            val trace = File(dir, "$name.ctrace")
+            val process = ProcessBuilder(
+                TestEnvironment.java, "-javaagent:${TestEnvironment.agentJar}=trace.file=$trace,$inline,config=$config",
+                "-cp", TestEnvironment.samplesClasspath, "samples.StructuredConcurrencyKt",
+            ).directory(dir).redirectErrorStream(true).redirectOutput(File(dir, "$name.txt")).start()
+            assertTrue(process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS), "$name did not finish: the file's pace won")
+            assertEquals(0, process.exitValue(), File(dir, "$name.txt").readText())
+            return trace.inputStream().use(TraceStore::read)
+        }
+
+        val faster = run("faster", "pace.events.per.second=500")
+        assertEquals(true, faster.header?.paceable)
+        assertEquals(2_000_000, faster.paceChanges.first().intervalNanos)
+
+        val off = run("off", "pace=false")
+        assertEquals(false, off.header?.paceable)
+        assertTrue(off.paceChanges.isEmpty())
+
+        val unlimited = run("unlimited", "pace.events.per.second=unlimited")
+        assertEquals(false, unlimited.header?.paceable, "no live socket and, now, no pace: no gate")
     }
 
     @Test

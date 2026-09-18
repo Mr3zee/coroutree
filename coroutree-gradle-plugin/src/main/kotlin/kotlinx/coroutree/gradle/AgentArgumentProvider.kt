@@ -45,6 +45,17 @@ internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
     @get:Internal
     abstract val stackDepth: Property<Int>
 
+    /** Execution control, as the agent reads it: the three `pace*` keys of `agent.properties`. */
+    @get:Internal
+    abstract val pace: Property<Boolean>
+
+    @get:Internal
+    abstract val paceStartPaused: Property<Boolean>
+
+    /** A positive decimal number or [UNLIMITED]; checked where it is resolved, see [CommandLine]. */
+    @get:Internal
+    abstract val paceEventsPerSecond: Property<String>
+
     @get:Internal
     abstract val includedPackages: ListProperty<String>
 
@@ -54,7 +65,12 @@ internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
     @get:Input
     val settings: Provider<String>
         get() = enabled.map { on ->
-            if (on) "live=${live.get()} stack=${stackDepth.get()} include=${includedPackages.get()} exclude=${excludedPackages.get()}" else ""
+            if (on) {
+                "live=${live.get()} stack=${stackDepth.get()} include=${includedPackages.get()} exclude=${excludedPackages.get()} " +
+                    "pace=${pace.get()} paused=${paceStartPaused.get()} eventsPerSecond=${paceEventsPerSecond.get()}"
+            } else {
+                ""
+            }
         }
 
     // Where things go says nothing about what the task produces, and the build id differs every time by design.
@@ -91,6 +107,14 @@ internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
         val depth = stackDepth.get()
         if (depth < 1) throw GradleException("coroutree.stackDepth must be positive, but it is $depth")
 
+        // Checks that combine settings run on what they resolved to, command line included.
+        if (pace.get() && paceStartPaused.get() && !live.get()) {
+            LOGGER.warn(
+                "coroutree: ${taskPath.get()} was to start paused, but without the live socket nothing could ever resume it: " +
+                    "pace.startPaused is ignored and the program runs."
+            )
+        }
+
         val buildId = BuildIdService.idOf(buildIdService.get())
         val workDir = File(workDirectory.get()).apply { mkdirs() }
         val traceDir = File(dataDirectory.get(), "traces/$buildId").apply { mkdirs() }
@@ -114,6 +138,9 @@ internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
             setProperty("include", include.joinToString(","))
             setProperty("exclude", excludedPackages.get().joinToString(","))
             setProperty("stack.depth", depth.toString())
+            setProperty("pace", pace.get().toString())
+            setProperty("pace.paused", paceStartPaused.get().toString())
+            setProperty("pace.events.per.second", paceEventsPerSecond.get())
         }
         val configFile = File(workDir, "agent.properties")
         writeAtomically(configFile) { config.store(it, "coroutree agent configuration of ${taskPath.get()}") }
@@ -146,6 +173,13 @@ internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
             writeAtomically(library) { out -> jar.getInputStream(entry).use { it.copyTo(out) } }
             return library
         }
+    }
+
+    internal companion object {
+        /** `pace.events.per.second` for "no limit"; the agent reads it as that. */
+        const val UNLIMITED = "unlimited"
+
+        private val LOGGER = org.gradle.api.logging.Logging.getLogger(AgentArgumentProvider::class.java)
     }
 
     /**

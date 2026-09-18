@@ -15,6 +15,7 @@ import kotlinx.coroutree.model.NodeInfo
 import kotlinx.coroutree.model.NodeKind
 import kotlinx.coroutree.model.NodeState
 import kotlinx.coroutree.model.Origin
+import kotlinx.coroutree.model.PaceDef
 import kotlinx.coroutree.model.PropagationDirection
 import kotlinx.coroutree.model.SourceFile
 import kotlinx.coroutree.model.SourceIndex
@@ -26,7 +27,8 @@ import kotlinx.coroutree.model.TraceHeader
 /**
  * A synthetic trace of a small "checkout" program that touches everything the GUI can show: threads and a dispatcher
  * pool, structured and unstructured coroutines, a dispatcher change, a failure that cancels siblings, a supervisor,
- * a CoroutineExceptionHandler, blocking, an interrupt, cross-links, library-internal nodes and an agent diagnostic.
+ * a CoroutineExceptionHandler, blocking, an interrupt, cross-links, library-internal nodes, an agent diagnostic, and
+ * execution control: the program was paused and stepped for a moment, and one subtree is still slowed down at the end.
  *
  * Used by `--demo`, by screenshots and by tests; with a delay between frames it doubles as a fake live session.
  */
@@ -76,6 +78,11 @@ object DemoTrace {
         ) {
             clock += advanceMicros * 1000
             frames += Frame(event = Event(seq = ++seq, timeNanos = clock, nodeId = nodeId, kind = kind, threadId = thread, stack = stack).configure())
+        }
+
+        /** A setting of the agent's gate, made right after the last event so far. */
+        fun pace(scope: Long = 0, intervalNanos: Long = 0, paused: Boolean = false, steps: Int = 0, reason: PaceDef.Reason = PaceDef.Reason.CONTROLLER, dropped: Boolean = false) {
+            frames += Frame(pace = PaceDef(clock, seq, scope, intervalNanos, paused, steps, reason, dropped))
         }
 
         fun job() = ContextElement(ContextElementKind.JOB, "Job")
@@ -149,8 +156,10 @@ object DemoTrace {
                     includePackages = listOf("demo.shop"),
                     startedAtEpochMillis = 1_789_668_900_000,
                     projectDir = "/demo",
+                    paceable = true,
                 )
             )
+            pace(reason = PaceDef.Reason.CONFIG)
             frames += Frame(
                 diagnostic = Diagnostic(
                     Diagnostic.Severity.WARNING,
@@ -246,8 +255,14 @@ object DemoTrace {
             val audit = coroutine("launch", scope, checkout("charge", 78), main, name = "audit", diff = toDefault)
             emit(scope, EventKind.SUSPENDED, main, listOf(checkout("charge", 72)))
             emit(runBlocking, EventKind.SUSPENDED, main, listOf(checkout("main", 27)))
+            // Somebody wants to watch the failure happen: paused, two steps, and on.
+            pace(paused = true)
+            clock += 4_000_000_000
+            pace(paused = true, steps = 2)
             emit(payment, EventKind.RESUMED, worker1)
             emit(audit, EventKind.RESUMED, worker2)
+            clock += 2_500_000_000
+            pace()
             emit(audit, EventKind.SUSPENDED, worker2, coroutineStack(checkout("writeAudit", 91)))
             val declined = exception("java.lang.IllegalStateException", "card declined", checkout("authorize", 84), identity = 0x5ca1ab1e)
             emit(payment, EventKind.EXCEPTION_THROWN, worker1, advanceMicros = 2100) { copy(exception = declined) }
@@ -309,6 +324,7 @@ object DemoTrace {
             emit(dispatch, EventKind.RESUMED, worker3)
             val onReceipt = coroutine("launch", dispatch, notifier("onReceipt", 61), worker3, name = "receipt")
             emit(onReceipt, EventKind.RESUMED, worker1)
+            pace(scope = onReceipt, intervalNanos = 2_000_000_000) // one subtree in slow motion, to the end of the trace
             emit(onReceipt, EventKind.SUSPENDED, worker1, coroutineStack(notifier("storeReceipt", 68)))
             emit(dispatch, EventKind.SUSPENDED, worker3, coroutineStack(http("dispatchResponse", 153)))
 

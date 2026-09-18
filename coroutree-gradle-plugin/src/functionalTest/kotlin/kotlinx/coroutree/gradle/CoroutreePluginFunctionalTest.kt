@@ -58,6 +58,9 @@ class CoroutreePluginFunctionalTest {
         assertEquals(":run", config.getProperty("task.path"))
         assertEquals(project.dir.path, config.getProperty("project.dir"))
         assertEquals("32", config.getProperty("stack.depth"))
+        assertEquals("true", config.getProperty("pace"), "execution control is on by default: an open gate holds nobody")
+        assertEquals("false", config.getProperty("pace.paused"))
+        assertEquals("unlimited", config.getProperty("pace.events.per.second"))
         assertEquals("demo.app", config.getProperty("include"), "packages of the sources, reduced to minimal prefixes, without the root package")
         assertEquals("", config.getProperty("exclude"))
 
@@ -83,6 +86,11 @@ class CoroutreePluginFunctionalTest {
                     includePackages("demo", "com.acme")
                     excludePackages("demo.generated")
                     live { enabled = false }
+                    pace {
+                        enabled = false
+                        startPaused = true
+                        eventsPerSecond = 0.2
+                    }
                     stackDepth = 8
                 }
             """,
@@ -95,6 +103,175 @@ class CoroutreePluginFunctionalTest {
         assertEquals("demo.generated", config.getProperty("exclude"))
         assertEquals("false", config.getProperty("live"))
         assertEquals("8", config.getProperty("stack.depth"))
+        assertEquals("false", config.getProperty("pace"))
+        assertEquals("true", config.getProperty("pace.paused"))
+        assertEquals("0.2", config.getProperty("pace.events.per.second"))
+    }
+
+    // ------------------------------------------------------------------ the command line wins over the build script
+
+    private val everythingOn = """
+        coroutree {
+            enabled = true
+            live { enabled = true }
+            pace {
+                enabled = true
+                startPaused = true
+                eventsPerSecond = 5.0
+            }
+        }
+    """
+    private val everythingOff = """
+        coroutree {
+            enabled = false
+            live { enabled = false }
+            pace {
+                enabled = false
+                startPaused = false
+            }
+        }
+    """
+
+    private fun paceConfig() = project.agentConfig("build/coroutree/tmp/run/agent.properties").let { config ->
+        listOf("live", "pace", "pace.paused", "pace.events.per.second").associateWith { config.getProperty(it) }
+    }
+
+    @Test
+    fun commandLineSwitchesOffWhatTheScriptSwitchesOn() {
+        project.javaApplication(extraBuildScript = everythingOn)
+        project.run("run")
+        assertEquals(mapOf("live" to "true", "pace" to "true", "pace.paused" to "true", "pace.events.per.second" to "5.0"), paceConfig())
+
+        project.run("run", "-Pcoroutree.live=false", "-Pcoroutree.pace=false", "-Pcoroutree.pace.startPaused=false", "-Pcoroutree.pace.eventsPerSecond=unlimited")
+        assertEquals(mapOf("live" to "false", "pace" to "false", "pace.paused" to "false", "pace.events.per.second" to "unlimited"), paceConfig())
+
+        // One at a time: each property stands for itself.
+        project.run("run", "-Pcoroutree.pace.startPaused=false")
+        assertEquals(mapOf("live" to "true", "pace" to "true", "pace.paused" to "false", "pace.events.per.second" to "5.0"), paceConfig())
+        project.run("run", "-Pcoroutree.pace.eventsPerSecond=0.25")
+        assertEquals("0.25", paceConfig()["pace.events.per.second"])
+
+        File(project.dir, "build/coroutree").deleteRecursively()
+        assertContains(project.run("run", "-Pcoroutree=false").output, "demo is running")
+        assertFalse(project.exists("build/coroutree"), "-Pcoroutree=false switches off a script's 'enabled = true'")
+    }
+
+    @Test
+    fun commandLineSwitchesOnWhatTheScriptSwitchesOff() {
+        project.javaApplication(extraBuildScript = everythingOff)
+        project.run("run")
+        assertFalse(project.exists("build/coroutree"))
+
+        // Bare properties mean true.
+        project.run("run", "-Pcoroutree", "-Pcoroutree.live", "-Pcoroutree.pace", "-Pcoroutree.pace.startPaused", "-Pcoroutree.pace.eventsPerSecond=2")
+        assertEquals(mapOf("live" to "true", "pace" to "true", "pace.paused" to "true", "pace.events.per.second" to "2"), paceConfig())
+
+        project.run("run", "-Pcoroutree=true", "-Pcoroutree.live=true", "-Pcoroutree.pace=true", "-Pcoroutree.pace.startPaused=true")
+        assertEquals(mapOf("live" to "true", "pace" to "true", "pace.paused" to "true", "pace.events.per.second" to "unlimited"), paceConfig())
+
+        project.run("run", "-Pcoroutree")
+        assertEquals(mapOf("live" to "false", "pace" to "false", "pace.paused" to "false", "pace.events.per.second" to "unlimited"), paceConfig(), "what is not on the command line is the script's")
+    }
+
+    @Test
+    fun gradlePropertiesFileIsACommandLineToo() {
+        project.javaApplication(extraBuildScript = everythingOn)
+        project.file("gradle.properties", "coroutree.live=false\ncoroutree.pace.eventsPerSecond=unlimited")
+        project.run("run")
+        assertEquals(mapOf("live" to "false", "pace" to "true", "pace.paused" to "true", "pace.events.per.second" to "unlimited"), paceConfig())
+        // … and among Gradle's own sources of properties the real command line is the strongest.
+        project.run("run", "-Pcoroutree.live=true")
+        assertEquals("true", paceConfig()["live"])
+    }
+
+    @Test
+    fun aValueThatDoesNotParseFailsTheBuildAndNamesTheProperty() {
+        project.javaApplication(extraBuildScript = everythingOn)
+        for ((argument, named) in listOf(
+            "-Pcoroutree.live=maybe" to "-Pcoroutree.live=maybe",
+            "-Pcoroutree.pace=off" to "-Pcoroutree.pace=off",
+            "-Pcoroutree.pace.startPaused=1" to "-Pcoroutree.pace.startPaused=1",
+            "-Pcoroutree.pace.eventsPerSecond=fast" to "-Pcoroutree.pace.eventsPerSecond=fast",
+            "-Pcoroutree.pace.eventsPerSecond=0" to "-Pcoroutree.pace.eventsPerSecond=0",
+            "-Pcoroutree.pace.eventsPerSecond=-3" to "-Pcoroutree.pace.eventsPerSecond=-3",
+            "-Pcoroutree.pace.eventsPerSecond=" to "-Pcoroutree.pace.eventsPerSecond=",
+        )) {
+            File(project.dir, "build/coroutree").deleteRecursively()
+            val result = project.runner("run", argument).buildAndFail()
+            assertContains(result.output, named, message = argument)
+            assertFalse("demo is running" in result.output, "$argument: the program was started with a setting nobody asked for")
+        }
+    }
+
+    @Test
+    fun aPaceInTheScriptThatIsNoPaceFailsTheBuildToo() {
+        project.javaApplication(extraBuildScript = "coroutree { enabled = true; pace { eventsPerSecond = -1.0 } }")
+        assertContains(project.runner("run").buildAndFail().output, "coroutree.pace.eventsPerSecond=-1.0")
+        // Unless the command line says something else: then the script's value is not even looked at.
+        assertContains(project.run("run", "-Pcoroutree.pace.eventsPerSecond=4").output, "demo is running")
+        assertEquals("4", paceConfig()["pace.events.per.second"])
+    }
+
+    @Test
+    fun aChangedPropertyArrivesThroughAReusedConfigurationCache() {
+        project.javaApplication(extraBuildScript = everythingOn)
+        val first = project.run("run", "--configuration-cache", "-Pcoroutree.live=false", "-Pcoroutree.pace.eventsPerSecond=3")
+        assertContains(first.output, "Configuration cache entry stored")
+        assertEquals("false", paceConfig()["live"])
+        assertEquals("3", paceConfig()["pace.events.per.second"])
+
+        val second = project.run("run", "--configuration-cache", "-Pcoroutree.live=true", "-Pcoroutree.pace.eventsPerSecond=unlimited", "-Pcoroutree.pace.startPaused=false")
+        assertContains(second.output, "Reusing configuration cache")
+        assertEquals(mapOf("live" to "true", "pace" to "true", "pace.paused" to "false", "pace.events.per.second" to "unlimited"), paceConfig())
+
+        val third = project.run("run", "--configuration-cache")
+        assertContains(third.output, "Reusing configuration cache")
+        assertEquals(mapOf("live" to "true", "pace" to "true", "pace.paused" to "true", "pace.events.per.second" to "5.0"), paceConfig(), "and without the properties the script is back")
+
+        val bad = project.runner("run", "--configuration-cache", "-Pcoroutree.pace=perhaps").buildAndFail()
+        assertContains(bad.output, "-Pcoroutree.pace=perhaps")
+    }
+
+    @Test
+    fun startPausedWithoutTheLiveSocketIsRefusedOnWhatTheSettingsResolveTo() {
+        project.javaApplication(extraBuildScript = everythingOn)
+        val warning = "without the live socket nothing could ever resume it"
+        assertFalse(warning in project.run("run").output)
+
+        // The script asks for a paused start and for live; the command line takes live away.
+        val result = project.run("run", "-Pcoroutree.live=false")
+        assertContains(result.output, warning)
+        assertContains(result.output, "demo is running")
+        assertEquals(mapOf("live" to "false", "pace" to "true", "pace.paused" to "true", "pace.events.per.second" to "5.0"), paceConfig(), "the agent is told what was asked for; it refuses the same way and says so in the trace")
+
+        assertFalse(warning in project.run("run", "-Pcoroutree.live=false", "-Pcoroutree.pace.startPaused=false").output)
+        assertFalse(warning in project.run("run", "-Pcoroutree.live=false", "-Pcoroutree.pace=false").output, "no gate, nothing to refuse")
+    }
+
+    @Test
+    fun testTasksGetTheSameSettings() {
+        project.file(
+            "build.gradle.kts",
+            """
+            plugins {
+                java
+                id("org.jetbrains.kotlinx.coroutree")
+            }
+            tasks.withType<JavaCompile>().configureEach { options.release = 17 }
+            dependencies {
+                coroutreeAgent(files("${project.fakeAgent}"))
+                testImplementation("org.junit.jupiter:junit-jupiter:${project.junitVersion}")
+                testRuntimeOnly("org.junit.platform:junit-platform-launcher:${project.junitVersion}")
+            }
+            tasks.test { useJUnitPlatform() }
+            coroutree { pace { eventsPerSecond = 10.0 } }
+            """,
+        )
+        project.file("src/test/java/demo/DemoTest.java", "package demo;\n\nimport org.junit.jupiter.api.Test;\n\nclass DemoTest {\n    @Test\n    void passes() {}\n}")
+        project.run("test", "-Pcoroutree", "-Pcoroutree.pace.startPaused")
+        val config = project.agentConfig("build/coroutree/tmp/test/agent.properties")
+        assertEquals("true", config.getProperty("pace.paused"))
+        assertEquals("10.0", config.getProperty("pace.events.per.second"))
     }
 
     @Test

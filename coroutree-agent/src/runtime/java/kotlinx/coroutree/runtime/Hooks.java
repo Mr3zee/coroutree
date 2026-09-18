@@ -14,13 +14,30 @@ import java.util.concurrent.ForkJoinWorkerThread;
  * Every hook has the same shape: bail out if tracing is off or if this thread is already inside a hook, do the
  * work, and swallow whatever goes wrong. Arguments are typed {@code Object} because this class is loaded by the
  * bootstrap loader and cannot name Kotlin types.
+ *
+ * The work has an order, because a hook is where the program can be held ({@link Pace}, DESIGN §3.1):
+ * <ol>
+ * <li>find everybody the step is about. Finding a node may report it ({@link #discover}, {@link #threadNode},
+ *     {@link #poolOf}), which is a step of its own and passes the gate itself, so all of it comes first;</li>
+ * <li>{@code Pace.await}: the one place where the thread may be held;</li>
+ * <li>only then read what is reported, decide, lock, emit.</li>
+ * </ol>
+ * What a hook looks at before its {@code await} are its arguments, state that only this thread changes, and peeks
+ * that save the thread from being held for a step with nothing to report; whatever a peek found is decided again
+ * after the hold. {@link Tracer#emit} refuses, loudly, an event of a hook call that has not passed the gate.
  */
 public final class Hooks {
     private Hooks() {}
 
     private static final WeakIdentityMap<Thread, ThreadNode> THREADS = new WeakIdentityMap<>();
-    private static final WeakIdentityMap<Object, Long> POOLS = new WeakIdentityMap<>();
+    private static final WeakIdentityMap<Object, PoolNode> POOLS = new WeakIdentityMap<>();
     private static final Object DISCOVERY_LOCK = new Object();
+
+    /** The execution unit whose code is running on this thread: the innermost coroutine, or the thread itself. */
+    private static PaceNode unitOn(ThreadState ts) {
+        JobNode unit = ts.currentUnit();
+        return unit != null ? unit : threadNode(ts);
+    }
 
     // ------------------------------------------------------------------ coroutines: structure
 
@@ -38,7 +55,7 @@ public final class Hooks {
         } catch (Throwable e) {
             Tracer.reportInternalError("coroutineCreated", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -55,7 +72,7 @@ public final class Hooks {
         } catch (Throwable e) {
             Tracer.reportInternalError("jobCreated", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -70,7 +87,16 @@ public final class Hooks {
         JobNode parentNode = parent == null ? null : nodeOf(parent, ts);
         ThreadNode thread = threadNode(ts);
         JobNode unit = ts.currentUnit();
-        long creator = unit != null ? unit.id : thread.id;
+        PaceNode creatorNode = unit != null ? unit : thread;
+        long creator = creatorNode.id;
+        // Scopes (withContext to another dispatcher included) and runBlocking run in their caller's place.
+        boolean calledInPlace = info.scoped || info.blocking;
+        if (Pace.GATE != null) {
+            // Its place in the structure is known before the gate: a child of a paused subtree is held at its own "launched".
+            node.paceParent = parentNode != null ? parentNode : calledInPlace ? creatorNode : null;
+            if (calledInPlace) node.caller = creatorNode;
+        }
+        Pace.await(ts, creatorNode, node, null);
 
         StackFrameRef[] stack = StackCapture.captureForSite();
         int site = StackCapture.siteIndex(stack);
@@ -84,7 +110,7 @@ public final class Hooks {
         def.implClass = job.getClass().getName();
         // Without a parent job we know of, runBlocking and scopes still have a place in the structure: under whoever
         // called them and waits for them. (withContext(NonCancellable) is such a scope: its parent is not a real job.)
-        def.parentId = parentNode != null ? parentNode.id : info.blocking || info.scoped ? creator : 0;
+        def.parentId = parentNode != null ? parentNode.id : calledInPlace ? creator : 0;
         def.creatorId = creator;
         setSite(def, stack, site);
 
@@ -114,9 +140,8 @@ public final class Hooks {
                 node.runThread = ts.thread.threadId();
             }
         }
-        if (info.scoped || info.blocking) {
-            // Scopes (withContext to another dispatcher included) and runBlocking do not report a failure to their
-            // parent job; they throw it at whoever called them.
+        if (calledInPlace) {
+            // They do not report a failure to their parent job; they throw it at whoever called them.
             node.rethrowsToId = creator;
             node.rethrowsTo = unit;
         }
@@ -125,8 +150,8 @@ public final class Hooks {
         TraceEvent launched = new TraceEvent(node.id, Wire.LAUNCHED, thread.id);
         launched.node = def;
         launched.stack = StackCapture.limit(stack, Tracer.config.stackDepth);
-        Tracer.emit(launched);
-        if (context != null) emitContextDiff(node, thread, parentContext);
+        Tracer.emit(ts, launched);
+        if (context != null) emitContextDiff(ts, node, thread, parentContext);
         if (node.startsUndispatched && !node.finished) ts.pushUnit(node);
     }
 
@@ -138,7 +163,7 @@ public final class Hooks {
     }
 
     /** CONTEXT_CHANGED for everything but the dispatcher, DISPATCHER_CHANGED for the dispatcher; the Job is not news. */
-    private static void emitContextDiff(JobNode node, ThreadNode thread, ContextEntry[] before) {
+    private static void emitContextDiff(ThreadState ts, JobNode node, ThreadNode thread, ContextEntry[] before) {
         ArrayList<TraceEvent.ContextChangeDef> general = new ArrayList<>();
         TraceEvent.ContextChangeDef dispatcher = null;
         for (ContextEntry now : node.context) {
@@ -157,12 +182,12 @@ public final class Hooks {
         if (!general.isEmpty()) {
             TraceEvent event = new TraceEvent(node.id, Wire.CONTEXT_CHANGED, thread.id);
             event.contextDiff = general.toArray(new TraceEvent.ContextChangeDef[0]);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         }
         if (dispatcher != null) {
             TraceEvent event = new TraceEvent(node.id, Wire.DISPATCHER_CHANGED, thread.id);
             event.contextDiff = new TraceEvent.ContextChangeDef[] {dispatcher};
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         }
     }
 
@@ -208,7 +233,11 @@ public final class Hooks {
         return node;
     }
 
+    /** A step of its own, whichever hook came across the job: it passes the gate before the lock its decision is made under. */
     private static void discover(Tagged job, JobNode node, ClassInfo info, ThreadState ts) {
+        ThreadNode thread = threadNode(ts);
+        JobNode unit = ts.currentUnit();
+        Pace.await(ts, unit != null ? unit : thread, node, null);
         synchronized (DISCOVERY_LOCK) {
             if (node.defined) return;
             node.defined = true;
@@ -218,9 +247,9 @@ public final class Hooks {
             def.construct = info.construct;
             def.implClass = job.getClass().getName();
             def.origin = Wire.ORIGIN_LIBRARY;
-            TraceEvent event = new TraceEvent(node.id, Wire.DISCOVERED, threadNode(ts).id);
+            TraceEvent event = new TraceEvent(node.id, Wire.DISCOVERED, thread.id);
             event.node = def;
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         }
     }
 
@@ -231,6 +260,15 @@ public final class Hooks {
             def.siteFrame = stack[site];
             def.origin = Tracer.config.isProjectClass(stack[site].className) ? Wire.ORIGIN_PROJECT : Wire.ORIGIN_LIBRARY;
         }
+    }
+
+    /** The node has ended: a setting of the gate on it is dropped, and it lets go of whom it hung under. */
+    private static void ended(JobNode node) {
+        if (Pace.GATE == null) return;
+        Pace.nodeFinished(node);
+        // A job ends after its children and a callee before its caller: nobody looks up through this node any more.
+        node.paceParent = null;
+        node.caller = null;
     }
 
     // ------------------------------------------------------------------ coroutines: suspend and resume
@@ -245,11 +283,23 @@ public final class Hooks {
             JobNode node = unitOf(frame, context, ts);
             if (node == null || node.finished) return;
             long tid = ts.thread.threadId();
+            boolean runningHere;
+            synchronized (node) {
+                runningHere = node.run == JobNode.RUNNING && node.runThread == tid;
+            }
+            if (runningHere) {
+                // The probe fires for every frame as a suspend call chain unwinds: nothing to report, nothing to be held for.
+                ts.pushUnit(node);
+                return;
+            }
+            long thread = threadNode(ts).id;
+            // The coroutine's own step, in its own flow. It is not on this thread's books yet, and if the thread stood
+            // in for it, the ten children of a single-threaded runBlocking would be spaced against each other.
+            Pace.await(ts, node, node, null);
             // A peek without the lock, to do the expensive part outside of it; the decision is made under the lock.
             StackFrameRef[] suspendedAt = node.run == JobNode.RUNNING && node.runThread != tid ? suspensionStack(frame) : null;
             synchronized (node) {
                 if (node.run != JobNode.RUNNING || node.runThread != tid) {
-                    long thread = threadNode(ts).id;
                     if (node.run == JobNode.RUNNING) {
                         // Running on another thread by our books: it suspended there and was resumed here before
                         // that thread got to say so. Say it for that thread, and ignore its report when it comes.
@@ -257,19 +307,18 @@ public final class Hooks {
                         node.lateSuspends++;
                         TraceEvent suspended = new TraceEvent(node.id, Wire.SUSPENDED, thread);
                         suspended.stack = suspendedAt != null ? suspendedAt : suspensionStack(frame);
-                        Tracer.emit(suspended);
+                        Tracer.emit(ts, suspended);
                     }
                     node.run = JobNode.RUNNING;
                     node.runThread = tid;
-                    Tracer.emit(new TraceEvent(node.id, Wire.RESUMED, thread));
+                    Tracer.emit(ts, new TraceEvent(node.id, Wire.RESUMED, thread));
                 }
-                // else: the probe fires for every frame as a suspend call chain unwinds; the coroutine is already running here
             }
             ts.pushUnit(node);
         } catch (Throwable e) {
             Tracer.reportInternalError("coroutineResumed", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -285,22 +334,35 @@ public final class Hooks {
             ts.popUnit(node);
             if (node.finished) return;
             long tid = ts.thread.threadId();
-            // Reading debug metadata runs library code and may load classes: not something to do holding a lock.
-            StackFrameRef[] stack = suspensionStack(frame);
+            boolean reportedAlready, running;
+            synchronized (node) {
+                reportedAlready = node.lateSuspends > 0 && node.runThread != tid;
+                running = node.run == JobNode.RUNNING;
+            }
+            if (!reportedAlready && !running) return;
+            long thread = threadNode(ts).id;
+            StackFrameRef[] stack = null;
+            if (!reportedAlready) {
+                // Like the resume, the coroutine's own step. Whoever resumes it elsewhere meanwhile waits for the same
+                // node, so the frame still says where it was suspended when this thread gets to read it.
+                Pace.await(ts, node, node, null);
+                // Reading debug metadata runs library code and may load classes: not something to do holding a lock.
+                stack = suspensionStack(frame);
+            }
             synchronized (node) {
                 if (node.lateSuspends > 0 && node.runThread != tid) {
                     node.lateSuspends--;
-                } else if (node.run == JobNode.RUNNING) {
+                } else if (node.run == JobNode.RUNNING && !reportedAlready) {
                     node.run = JobNode.SUSPENDED;
-                    TraceEvent event = new TraceEvent(node.id, Wire.SUSPENDED, threadNode(ts).id);
+                    TraceEvent event = new TraceEvent(node.id, Wire.SUSPENDED, thread);
                     event.stack = stack;
-                    Tracer.emit(event);
+                    Tracer.emit(ts, event);
                 }
             }
         } catch (Throwable e) {
             Tracer.reportInternalError("coroutineSuspended", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -353,21 +415,31 @@ public final class Hooks {
 
             ThreadNode thread = threadNode(ts);
             JobNode unit = ts.currentUnit();
-            long creator = unit != null ? unit.id : thread.id;
+            PaceNode creatorNode = unit != null ? unit : thread;
+            long creator = creatorNode.id;
+            // Before the gate, for once: what the construct is decides where the node hangs, which the gate has to
+            // know. A stack does not change while its thread is held.
             StackFrameRef[] stack = StackCapture.captureForSite();
             int site = StackCapture.siteIndex(stack);
+            String construct = StackCapture.construct(stack, site, "startCoroutine");
+            // suspend fun main is to its thread what runBlocking is: the thread waits for it and gets its failure.
+            // Anything else was started and left to itself, which is what a root is.
+            boolean suspendMain = construct.equals(StackCapture.SUSPEND_MAIN);
+            if (suspendMain && Pace.GATE != null) {
+                node.paceParent = creatorNode;
+                node.caller = creatorNode;
+            }
+            Pace.await(ts, creatorNode, node, null);
 
             TraceEvent.NodeDef def = new TraceEvent.NodeDef();
             def.id = node.id;
             def.kind = Wire.KIND_COROUTINE;
-            def.construct = StackCapture.construct(stack, site, "startCoroutine");
+            def.construct = construct;
             // What stands where a kotlinx.coroutines coroutine has its Job: the continuation it completes into.
             Object completion = access.completionOf(continuation);
             def.implClass = completion == null ? "" : completion.getClass().getName();
             def.creatorId = creator;
-            // suspend fun main is to its thread what runBlocking is: the thread waits for it and gets its failure.
-            // Anything else was started and left to itself, which is what a root is.
-            if (def.construct.equals(StackCapture.SUSPEND_MAIN)) {
+            if (suspendMain) {
                 def.parentId = creator;
                 node.rethrowsToId = creator;
                 node.rethrowsTo = unit;
@@ -390,12 +462,12 @@ public final class Hooks {
             TraceEvent launched = new TraceEvent(node.id, Wire.LAUNCHED, thread.id);
             launched.node = def;
             launched.stack = StackCapture.limit(stack, Tracer.config.stackDepth);
-            Tracer.emit(launched);
-            emitContextDiff(node, thread, parentContext);
+            Tracer.emit(ts, launched);
+            emitContextDiff(ts, node, thread, parentContext);
         } catch (Throwable e) {
             Tracer.reportInternalError("continuationCreated", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -413,15 +485,18 @@ public final class Hooks {
             if (access == null || JOBLESS.isEmpty() || access.job(access.contextOf(frame)) != null) return;
             JobNode node = joblessNode(access, frame, completion);
             if (node == null || node.finished) return;
-            node.finished = true;
-            ts.popUnit(node);
             long thread = threadNode(ts).id;
             // There is no Job, so there is no cancellation either: a CancellationException is an exception like any other.
             Throwable failure = access.failureOfResult(result);
+            PaceNode unit = unitOn(ts); // before the coroutine is taken off this thread's books: it is its own last step
+            Pace.await(ts, unit, node, failure != null ? node.caller : null);
+            if (node.finished) return;
+            node.finished = true;
+            ts.popUnit(node);
             if (failure != null && !node.isRethrowOfReceived(failure)) {
                 TraceEvent thrown = new TraceEvent(node.id, Wire.EXCEPTION_THROWN, thread);
                 thrown.exception = Describe.exception(failure, true, Tracer.config.stackDepth);
-                Tracer.emit(thrown);
+                Tracer.emit(ts, thrown);
             }
             if (failure != null && node.rethrowsToId != 0) {
                 JobNode caller = node.rethrowsTo;
@@ -430,15 +505,16 @@ public final class Hooks {
                 propagated.otherNodeId = node.id;
                 propagated.direction = Wire.CHILD_TO_PARENT;
                 propagated.exception = Describe.exception(failure, false, 0);
-                Tracer.emit(propagated);
+                Tracer.emit(ts, propagated);
             }
             TraceEvent event = new TraceEvent(node.id, Wire.FINISHED, thread);
             event.finalState = failure == null ? Wire.STATE_COMPLETED : Wire.STATE_FAILED;
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
+            ended(node);
         } catch (Throwable e) {
             Tracer.reportInternalError("continuationCompleted", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -485,15 +561,18 @@ public final class Hooks {
             if (node.finished) return;
             ThreadNode thread = threadNode(ts);
             JobNode unit = ts.currentUnit();
+            // An outsider that cancels into a paused subtree is held here, before the cancellation happens.
+            Pace.await(ts, unit != null ? unit : thread, node, null);
+            if (node.finished) return;
             TraceEvent event = new TraceEvent(node.id, Wire.CANCELLATION_REQUESTED, thread.id);
             event.otherNodeId = unit != null ? unit.id : thread.id;
             event.stack = StackCapture.capture(Tracer.config.stackDepth);
             if (cause != null) event.exception = Describe.exception(cause, false, 0);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("cancelRequested", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -507,14 +586,19 @@ public final class Hooks {
             if (!(child instanceof Tagged c) || !(parent instanceof Tagged p)) return;
             JobNode node = nodeOf(c, ts);
             if (node.finished || node.cancelling) return; // e.g. the failed child that made the parent cancel in the first place
-            TraceEvent event = new TraceEvent(node.id, Wire.CANCELLATION_PROPAGATED, threadNode(ts).id);
-            event.otherNodeId = nodeOf(p, ts).id;
+            JobNode parentNode = nodeOf(p, ts);
+            ThreadNode thread = threadNode(ts);
+            JobNode unit = ts.currentUnit();
+            Pace.await(ts, unit != null ? unit : thread, node, null);
+            if (node.finished || node.cancelling) return;
+            TraceEvent event = new TraceEvent(node.id, Wire.CANCELLATION_PROPAGATED, thread.id);
+            event.otherNodeId = parentNode.id;
             event.direction = Wire.PARENT_TO_CHILD;
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("parentCancelled", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -528,14 +612,18 @@ public final class Hooks {
             if (!(job instanceof Tagged tagged)) return;
             JobNode node = nodeOf(tagged, ts);
             if (node.cancelling || node.finished) return;
+            ThreadNode thread = threadNode(ts);
+            JobNode unit = ts.currentUnit();
+            Pace.await(ts, unit != null ? unit : thread, node, null);
+            if (node.cancelling || node.finished) return;
             node.cancelling = true;
-            TraceEvent event = new TraceEvent(node.id, Wire.CANCELLING, threadNode(ts).id);
+            TraceEvent event = new TraceEvent(node.id, Wire.CANCELLING, thread.id);
             if (cause != null) event.exception = Describe.exception(cause, false, 0);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("cancelling", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -551,18 +639,24 @@ public final class Hooks {
             KotlinAccess access = KotlinAccess.get();
             if (access == null || !(job instanceof Tagged tagged)) return;
             JobNode node = nodeOf(tagged, ts);
+            Throwable failure = access.failureOf(proposedUpdate);
+            boolean thrown = failure != null && !(failure instanceof CancellationException)
+                && !node.isRethrowOfReceived(failure); // came out of a scope it called; already recorded as propagated
+            // Whose step it is, is asked while the body that is over is still on this thread's books.
+            PaceNode unit = thrown ? unitOn(ts) : null;
             // Its code is done with this thread even if the job now waits for children and completes elsewhere.
             ts.popUnit(node);
-            Throwable failure = access.failureOf(proposedUpdate);
-            if (failure == null || failure instanceof CancellationException) return;
-            if (node.isRethrowOfReceived(failure)) return; // came out of a scope it called; already recorded as propagated
-            TraceEvent event = new TraceEvent(node.id, Wire.EXCEPTION_THROWN, threadNode(ts).id);
+            if (!thrown) return;
+            long thread = threadNode(ts).id;
+            Pace.await(ts, unit, node, null);
+            if (node.isRethrowOfReceived(failure)) return;
+            TraceEvent event = new TraceEvent(node.id, Wire.EXCEPTION_THROWN, thread);
             event.exception = Describe.exception(failure, true, Tracer.config.stackDepth);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("completing", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -577,16 +671,21 @@ public final class Hooks {
             if (access == null || !(job instanceof Tagged tagged)) return;
             JobNode node = nodeOf(tagged, ts);
             if (node.finished) return;
-            node.finished = true;
-            ts.popUnit(node);
             long thread = threadNode(ts).id;
             Throwable failure = access.failureOf(finalState);
             boolean failed = failure != null && !(failure instanceof CancellationException);
+            PaceNode unit = unitOn(ts); // before the node is taken off this thread's books
+            // "Propagated to the caller" lands on the caller. That is the scope's own flow when the scope ends where it
+            // ran, but a scope may end on the thread of its last child, and then it is another sequence to keep a distance in.
+            Pace.await(ts, unit, node, failed && node.rethrowsToId != 0 ? node.caller : null);
+            if (node.finished) return;
+            node.finished = true;
+            ts.popUnit(node);
             if (failed && node.deferred) {
                 TraceEvent held = new TraceEvent(node.id, Wire.EXCEPTION_HANDLED, thread);
                 held.handledBy = Wire.BY_DEFERRED_HELD;
                 held.exception = Describe.exception(failure, false, 0);
-                Tracer.emit(held);
+                Tracer.emit(ts, held);
             }
             if (failed && node.rethrowsToId != 0) {
                 // The exception continues as a throw from coroutineScope/withContext/runBlocking/… in the caller's code.
@@ -596,15 +695,16 @@ public final class Hooks {
                 propagated.otherNodeId = node.id;
                 propagated.direction = Wire.CHILD_TO_PARENT;
                 propagated.exception = Describe.exception(failure, false, 0);
-                Tracer.emit(propagated);
+                Tracer.emit(ts, propagated);
             }
             TraceEvent event = new TraceEvent(node.id, Wire.FINISHED, thread);
             event.finalState = failure == null ? Wire.STATE_COMPLETED : failed ? Wire.STATE_FAILED : Wire.STATE_CANCELLED;
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
+            ended(node);
         } catch (Throwable e) {
             Tracer.reportInternalError("completed", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -617,16 +717,21 @@ public final class Hooks {
         try {
             if (!(child instanceof Tagged c) || !(parent instanceof Tagged p)) return;
             JobNode childNode = nodeOf(c, ts);
-            if (!childNode.markPropagated(cause)) return; // the library reports to the parent twice: when cancelling and when final
-            TraceEvent event = new TraceEvent(nodeOf(p, ts).id, Wire.EXCEPTION_PROPAGATED, threadNode(ts).id);
+            if (childNode.hasPropagated(cause)) return; // the library reports to the parent twice: when cancelling and when final
+            JobNode parentNode = nodeOf(p, ts);
+            ThreadNode thread = threadNode(ts);
+            JobNode unit = ts.currentUnit();
+            Pace.await(ts, unit != null ? unit : thread, parentNode, null); // a step of its own, about the parent
+            if (!childNode.markPropagated(cause)) return;
+            TraceEvent event = new TraceEvent(parentNode.id, Wire.EXCEPTION_PROPAGATED, thread.id);
             event.otherNodeId = childNode.id;
             event.direction = Wire.CHILD_TO_PARENT;
             event.exception = Describe.exception(cause, false, 0);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("childCancelled", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -643,16 +748,21 @@ public final class Hooks {
             // exception to (the child's own handler is next). A parent that is unaffected is a supervisor.
             if (parentNode.cancelling || parentNode.finished) return;
             JobNode childNode = nodeOf(c, ts);
+            if (childNode.hasStopped(cause)) return;
+            ThreadNode thread = threadNode(ts);
+            JobNode unit = ts.currentUnit();
+            Pace.await(ts, unit != null ? unit : thread, parentNode, null);
+            if (parentNode.cancelling || parentNode.finished) return;
             if (!childNode.markStopped(cause)) return;
-            TraceEvent event = new TraceEvent(parentNode.id, Wire.EXCEPTION_HANDLED, threadNode(ts).id);
+            TraceEvent event = new TraceEvent(parentNode.id, Wire.EXCEPTION_HANDLED, thread.id);
             event.otherNodeId = childNode.id;
             event.handledBy = Wire.BY_SUPERVISOR;
             event.exception = Describe.exception(cause, false, 0);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("childCancelledResult", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -666,16 +776,19 @@ public final class Hooks {
             KotlinAccess access = KotlinAccess.get();
             if (access == null) return;
             ThreadNode thread = threadNode(ts);
+            JobNode unit = ts.currentUnit();
             JobNode node = nodeOfContext(context, ts);
-            if (node == null) node = ts.currentUnit();
-            TraceEvent event = new TraceEvent(node != null ? node.id : thread.id, Wire.EXCEPTION_HANDLED, thread.id);
+            if (node == null) node = unit;
+            PaceNode target = node != null ? node : thread;
+            Pace.await(ts, unit != null ? unit : thread, target, null);
+            TraceEvent event = new TraceEvent(target.id, Wire.EXCEPTION_HANDLED, thread.id);
             event.handledBy = access.hasExceptionHandler(context) ? Wire.BY_COROUTINE_EXCEPTION_HANDLER : Wire.BY_UNCAUGHT_EXCEPTION_HANDLER;
             event.exception = Describe.exception(exception, false, 0);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("exceptionReachedHandler", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -688,15 +801,17 @@ public final class Hooks {
         try {
             ThreadNode thread = threadNode(ts);
             JobNode unit = ts.currentUnit();
-            TraceEvent event = new TraceEvent(unit != null ? unit.id : thread.id, Wire.EXCEPTION_HANDLED, thread.id);
+            PaceNode target = unit != null ? unit : thread;
+            Pace.await(ts, target, target, null);
+            TraceEvent event = new TraceEvent(target.id, Wire.EXCEPTION_HANDLED, thread.id);
             event.handledBy = Wire.BY_CATCH;
             event.exception = Describe.exception(exception, true, Tracer.config.stackDepth);
             event.stack = StackCapture.capture(Tracer.config.stackDepth);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("exceptionCaught", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -711,8 +826,8 @@ public final class Hooks {
         try {
             ThreadNode starter = threadNode(ts);
             JobNode unit = ts.currentUnit();
-            long creator = unit != null ? unit.id : starter.id;
-            StackFrameRef[] stack = StackCapture.captureForSite();
+            PaceNode creatorNode = unit != null ? unit : starter;
+            long creator = creatorNode.id;
 
             // The node may exist, undefined, if the thread was heard of before it was started (see threadNode).
             ThreadNode node = THREADS.get(thread);
@@ -721,16 +836,22 @@ public final class Hooks {
                 ThreadNode raced = THREADS.putIfAbsent(thread, node);
                 if (raced != null) node = raced;
             }
+            if (node.defined) return; // a virtual thread passes through two instrumented start methods
+            PoolNode pool = poolOf(ts, thread, creatorNode, starter);
+            if (Pace.GATE != null) node.paceParent = pool != null ? pool : starter;
+            // Inside Thread.start: the starter may own the monitor of the Thread. Whoever wants it waits as for any
+            // slow thread; the release of this one waits for nobody.
+            Pace.await(ts, creatorNode, node, null);
             synchronized (node) {
-                if (node.defined) return; // a virtual thread passes through two instrumented start methods
+                if (node.defined) return;
                 node.defined = true;
             }
+            StackFrameRef[] stack = StackCapture.captureForSite();
             TraceEvent.NodeDef def = threadDef(node, thread);
             def.creatorId = creator;
-            long pool = poolOf(thread, creator, starter);
-            if (pool != 0) {
+            if (pool != null) {
                 // Which thread happened to make the pool grow is an accident, and so is the line it was at.
-                def.parentId = pool;
+                def.parentId = pool.id;
                 def.construct = "worker";
                 def.origin = Wire.ORIGIN_LIBRARY;
             } else {
@@ -749,11 +870,11 @@ public final class Hooks {
             TraceEvent event = new TraceEvent(node.id, Wire.LAUNCHED, starter.id);
             event.node = def;
             event.stack = StackCapture.limit(stack, Tracer.config.stackDepth);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("threadStart", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -766,14 +887,25 @@ public final class Hooks {
         try {
             ThreadNode node = THREADS.get(thread);
             if (node == null || node.finished) return; // never did anything we saw: not worth a node now
+            JobNode unit = ts.currentUnit();
+            Pace.await(ts, unit != null ? unit : node, node, null);
+            if (node.finished) return;
             node.finished = true;
             TraceEvent event = new TraceEvent(node.id, Wire.FINISHED, node.id);
             event.finalState = node.failed ? Wire.STATE_FAILED : Wire.STATE_COMPLETED;
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
+            // A thread cannot end inside a blocking call. If the books say it does, an enter went without its exit: the
+            // kind of damage a hold could do (it sleeps inside hooks, and sleep is hooked) and must never do.
+            if (Tracer.DEBUG && (ts.blockDepth != 0 || ts.blockEmittedAt != 0)) {
+                Tracer.reportInternalError("blocking calls of " + thread.getName(),
+                    new IllegalStateException("unbalanced at the end of the thread: depth " + ts.blockDepth + ", reported at " + ts.blockEmittedAt));
+            }
+            // Its setting goes; its place in the structure stays, for the threads it started live on below it.
+            Pace.nodeFinished(node);
         } catch (Throwable e) {
             Tracer.reportInternalError("threadExit", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -786,14 +918,16 @@ public final class Hooks {
         try {
             ThreadNode thread = threadNode(ts);
             JobNode unit = ts.currentUnit();
-            TraceEvent event = new TraceEvent(threadNode(target, thread.id).id, Wire.THREAD_INTERRUPTED, thread.id);
+            ThreadNode targetNode = threadNode(ts, target, thread.id);
+            Pace.await(ts, unit != null ? unit : thread, targetNode, null); // before the interrupt happens
+            TraceEvent event = new TraceEvent(targetNode.id, Wire.THREAD_INTERRUPTED, thread.id);
             event.otherNodeId = unit != null ? unit.id : thread.id;
             event.stack = StackCapture.capture(Tracer.config.stackDepth);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("threadInterrupt", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -805,25 +939,27 @@ public final class Hooks {
         ts.inHook = true;
         try {
             ThreadNode node = threadNode(ts);
+            JobNode unit = ts.currentUnit();
+            Pace.await(ts, unit != null ? unit : node, node, null);
             node.failed = true;
             TraceEvent thrown = new TraceEvent(node.id, Wire.EXCEPTION_THROWN, node.id);
             thrown.exception = Describe.exception(exception, true, Tracer.config.stackDepth);
-            Tracer.emit(thrown);
+            Tracer.emit(ts, thrown);
             TraceEvent handled = new TraceEvent(node.id, Wire.EXCEPTION_HANDLED, node.id);
             handled.handledBy = Wire.BY_UNCAUGHT_EXCEPTION_HANDLER;
             handled.exception = Describe.exception(exception, false, 0);
-            Tracer.emit(handled);
+            Tracer.emit(ts, handled);
         } catch (Throwable e) {
             Tracer.reportInternalError("threadUncaught", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
     private static ThreadNode threadNode(ThreadState ts) {
         ThreadNode node = ts.node;
         if (node == null) {
-            node = threadNode(ts.thread, 0);
+            node = threadNode(ts, ts.thread, 0);
             ts.node = node;
         }
         return node;
@@ -832,8 +968,9 @@ public final class Hooks {
     /**
      * The node of a thread, DISCOVERED here if its start was not seen (main, JVM threads). A thread that has not been
      * started yet — interrupting one is legal — is left undefined: its start will be seen, and LAUNCHED defines it.
+     * Discovering is a step of its own and passes the gate before its decision.
      */
-    private static ThreadNode threadNode(Thread thread, long reportingThread) {
+    private static ThreadNode threadNode(ThreadState ts, Thread thread, long reportingThread) {
         ThreadNode node = THREADS.get(thread);
         if (node == null) {
             node = new ThreadNode(Tracer.newNodeId());
@@ -841,6 +978,9 @@ public final class Hooks {
             if (raced != null) node = raced;
         }
         if (node.defined || thread.getState() == Thread.State.NEW) return node;
+        PaceNode unit = ts.currentUnit();
+        if (unit == null) unit = thread == ts.thread ? node : threadNode(ts);
+        Pace.await(ts, unit, node, null);
         synchronized (node) {
             if (node.defined) return node;
             node.defined = true;
@@ -849,7 +989,7 @@ public final class Hooks {
         def.origin = Wire.ORIGIN_LIBRARY;
         TraceEvent event = new TraceEvent(node.id, Wire.DISCOVERED, reportingThread != 0 ? reportingThread : node.id);
         event.node = def;
-        Tracer.emit(event);
+        Tracer.emit(ts, event);
         return node;
     }
 
@@ -866,8 +1006,11 @@ public final class Hooks {
         return def;
     }
 
-    /** Node id of the pool a worker thread belongs to, 0 if it is not a pool worker this agent knows how to recognise. */
-    private static long poolOf(Thread thread, long creator, ThreadNode starter) {
+    /**
+     * The pool a worker thread belongs to, {@code null} if it is not a pool worker this agent knows how to recognise.
+     * The first worker of a pool brings the pool along: a step of its own, of the thread that made the pool grow.
+     */
+    private static PoolNode poolOf(ThreadState ts, Thread thread, PaceNode creatorNode, ThreadNode starter) {
         Object pool = null;
         String name = null;
         try {
@@ -883,25 +1026,41 @@ public final class Hooks {
                 name = String.valueOf(pool.getClass().getField("schedulerName").get(pool));
             }
         } catch (ReflectiveOperationException | RuntimeException e) {
-            return 0;
+            return null;
         }
-        if (pool == null) return 0;
-        Long known = POOLS.get(pool);
+        if (pool == null) return null;
+        PoolNode known = POOLS.get(pool);
         if (known != null) return known;
-        long id = Tracer.newNodeId();
-        known = POOLS.putIfAbsent(pool, id);
+        PoolNode node = new PoolNode(Tracer.newNodeId());
+        known = POOLS.putIfAbsent(pool, node);
         if (known != null) return known;
+        // Who reports the pool is settled; a worker that another thread starts meanwhile refers to a node that is
+        // defined a moment later, which readers are used to.
+        Pace.await(ts, creatorNode, node, null);
         TraceEvent.NodeDef def = new TraceEvent.NodeDef();
-        def.id = id;
+        def.id = node.id;
         def.kind = Wire.KIND_POOL;
         def.name = name;
         def.implClass = pool.getClass().getName();
-        def.creatorId = creator;
+        def.creatorId = creatorNode.id;
         def.origin = Wire.ORIGIN_LIBRARY;
-        TraceEvent event = new TraceEvent(id, Wire.LAUNCHED, starter.id);
+        TraceEvent event = new TraceEvent(node.id, Wire.LAUNCHED, starter.id);
         event.node = def;
-        Tracer.emit(event);
-        return id;
+        Tracer.emit(ts, event);
+        return node;
+    }
+
+    /**
+     * Start of {@code ApplicationShutdownHooks.runHooks}: the JVM is on its way down and is about to start the shutdown
+     * hooks, ours among them. The gate opens now, not when our hook gets to run. No event, so no {@code await}.
+     */
+    public static void shutdownBegins() {
+        try {
+            Pace gate = Pace.GATE;
+            if (gate != null) gate.shutdown();
+        } catch (Throwable e) {
+            Tracer.reportInternalError("shutdownBegins", e);
+        }
     }
 
     // ------------------------------------------------------------------ threads: blocking
@@ -910,6 +1069,9 @@ public final class Hooks {
      * Start of an instrumented blocking method; {@code reason} is a {@code Wire.BLOCK_*} constant. Blocking methods
      * call each other ({@code join} waits with {@code wait}, {@code sleep} on a virtual thread parks), so only the
      * outermost one of a unit is reported. The depth is kept even when nothing is reported: every enter has an exit.
+     *
+     * The gate's own sleep comes by here too, and by {@link #blockExit}, with {@code inHook} set: both return before
+     * they touch the depth, so the hold is not a blocking call and leaves the books as they were.
      */
     public static void blockEnter(int reason) {
         if (!Tracer.active) return;
@@ -922,17 +1084,20 @@ public final class Hooks {
             if (reason == Wire.BLOCK_PARK && isRuntimeHousekeeping(StackCapture.capture(8))) return;
             ThreadNode thread = threadNode(ts);
             JobNode unit = ts.currentUnit();
+            // Held before it blocks: inside park, sleep, wait (owning the monitor it is about to wait on) or, called
+            // from the JVMTI probe, in front of a contended monitor.
+            Pace.await(ts, unit != null ? unit : thread, thread, null);
             ts.blockEmittedAt = ts.blockDepth;
             ts.blockOtherNodeId = unit != null ? unit.id : 0;
             TraceEvent event = new TraceEvent(thread.id, Wire.THREAD_BLOCKED, thread.id);
             event.otherNodeId = ts.blockOtherNodeId;
             event.blockReason = reason;
             event.stack = StackCapture.capture(Tracer.config.stackDepth);
-            Tracer.emit(event);
+            Tracer.emit(ts, event);
         } catch (Throwable e) {
             Tracer.reportInternalError("blockEnter", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 
@@ -958,17 +1123,21 @@ public final class Hooks {
         try {
             if (ts.blockDepth == 0) return; // entered before tracing was on
             if (ts.blockEmittedAt == ts.blockDepth) {
-                ts.blockEmittedAt = 0;
                 ThreadNode thread = threadNode(ts);
+                JobNode unit = ts.currentUnit();
+                // Held after it woke up, with whatever it woke up owning. An interrupt that ended the blocking call is
+                // in the flag or on its way as an exception; either way it is there when the thread goes on.
+                Pace.await(ts, unit != null ? unit : thread, thread, null);
+                ts.blockEmittedAt = 0;
                 TraceEvent event = new TraceEvent(thread.id, Wire.THREAD_UNBLOCKED, thread.id);
                 event.otherNodeId = ts.blockOtherNodeId;
-                Tracer.emit(event);
+                Tracer.emit(ts, event);
             }
             ts.blockDepth--;
         } catch (Throwable e) {
             Tracer.reportInternalError("blockExit", e);
         } finally {
-            ts.inHook = false;
+            ts.exitHook();
         }
     }
 

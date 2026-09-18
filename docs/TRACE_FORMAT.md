@@ -11,6 +11,10 @@ Two implementations share this format and nothing else:
 `coroutree-integration-tests` decodes what the real agent wrote with the model in every test; `CorpusTest` fails if an
 event kind stops occurring in the sample corpus, so every message shape stays covered.
 
+Version 1 has grown once, by fields that old readers skip: execution control (M1.2) added `Frame.pace`,
+`TraceHeader.paceable`, `Event.held_nanos` and `Event.same_step`. A JVM without a gate (`pace=false`, or no live socket
+and no configured pace) writes none of them, and its trace is byte for byte what it was before.
+
 ## Layout
 
 ```
@@ -37,6 +41,7 @@ message Frame {                       // exactly one field is set
   Event         event       = 2;
   StackFrameDef stack_frame = 3;
   Diagnostic    diagnostic  = 4;
+  PaceDef       pace        = 5;   // execution control: a setting of the agent's gate, see below
 }
 
 message TraceHeader {
@@ -50,6 +55,7 @@ message TraceHeader {
   repeated string exclude_packages    = 8;
   int64       started_at_epoch_millis = 9;
   string      project_dir             = 10;  // root project directory, absolute
+  bool        paceable                = 11;  // the JVM has a gate: it can be slowed down, paused and stepped
 }
 
 message JvmInfo {
@@ -89,6 +95,21 @@ message Event {
   HandledBy   handled_by   = 12;                 // EXCEPTION_HANDLED
   PropagationDirection direction = 13;           // *_PROPAGATED
   NodeState   final_state  = 14;                 // FINISHED: COMPLETED, FAILED or CANCELLED
+  int64       held_nanos   = 15;                 // how long the gate held thread_id since that thread's previous event
+  bool        same_step    = 16;                 // not the first event of its step, see "Execution control"
+}
+
+// A setting of the agent's gate as it is from now on. Not an event: the program did nothing, and it takes no seq.
+message PaceDef {
+  enum Reason { REASON_UNSPECIFIED = 0; CONFIG = 1; CONTROLLER = 2; FAIL_OPEN = 3; SHUTDOWN = 4; NODE_FINISHED = 5; }
+  int64  time_nanos     = 1;   // since the trace started
+  int64  after_seq      = 2;   // the latest seq handed out when the setting changed: where among the events it belongs
+  int64  scope_node_id  = 3;   // 0 = the global setting; else the node whose structural subtree it holds for
+  int64  interval_nanos = 4;   // minimum distance between two steps of one sequence; 0 = no limit
+  bool   paused         = 5;
+  int32  steps          = 6;   // steps this change let through a paused gate (`step n`); 0 for any other change
+  Reason reason         = 7;
+  bool   dropped        = 8;   // the node's setting is gone, it goes by its parent's again; never for the global one
 }
 
 enum EventKind {
@@ -201,6 +222,28 @@ inline function has its site there, in a library's inline function at the projec
 in the trace (events, exceptions, suspension points) and for the classes of libraries as well as the project's.
 The `main(String[])` behind a `suspend fun main`, which has no line numbers, is given the line of the declaration.
 
+**Execution control** (DESIGN §3.1). The agent can hold the program's threads at their events: to slow it down (a
+*pace*: a minimum interval between two steps of one *sequence* — steps made by the same flow, or happening to the same
+node), to pause it, and to let it go on step by step; for the whole program or for the structural subtree of a node.
+The hold itself is **not in the trace**: no event, no state, no `THREAD_BLOCKED`. What is in the trace is the truth
+about time and about settings:
+
+- `held_nanos`: how long the thread of an event was held since its previous event. Sums per thread are exact (time
+  held for a hook call that then had nothing to report is carried to the thread's next event), which is what a later
+  virtual clock needs: program time = wall time minus time held.
+- A *step* is one hook call that emits at least one event — *launched* + *context changed*, *thrown* + *handled*, a
+  job's *propagated to the caller* + *finished*. There is no program code between the events of a step, so they are
+  never spread out. The first event of a step has `same_step = false`, the others `true`; steps are what a pace spaces
+  and what `step n` counts.
+- `time_nanos` of the first event of a step is the moment the gate let it go. Two steps that share a sequence are
+  therefore at least the interval apart *exactly*, whatever order they reach the writer in.
+- `PaceDef`: every change of a setting, in the order it was made, each a complete setting. The first one (`CONFIG`)
+  is what the run started with. `CONTROLLER`: a command of a live client. `FAIL_OPEN`: the last controlling client
+  went away (or there never could be one) and everything is as configured again, unpaused, subtree settings dropped.
+  `NODE_FINISHED`: the node that carried the setting ended. `SHUTDOWN`: the JVM is going down and the gate is open for
+  good. A reader folds them into "global setting + settings by node"; what governs a node is the innermost setting on
+  its way to the root, else the global one.
+
 ## Live stream
 
 Loopback TCP, random port. The agent publishes a session descriptor, `<sessions dir>/<pid>.json`:
@@ -210,7 +253,29 @@ Loopback TCP, random port. The agent publishes a session descriptor, `<sessions 
  "buildId":"20260917-211201-7c32","command":"com.acme.MainKt","startedAt":1789672321000,"ended":false}
 ```
 
+With a gate in the JVM the descriptor also says `"paceable":true`.
+
 A client connects, sends the token and `\n`, and receives the trace from its first byte (magic, header, everything so
 far), then frames as they are written, until the JVM exits. A wrong token gets the connection closed. On orderly
 shutdown the descriptor is rewritten with `"ended":true`; after a crash it is stale, the connection is refused, and
 `traceFile` has everything up to the last flush.
+
+### Commands
+
+In a JVM that has a gate the socket is two-way. After the token a client may send commands, one per line (`\n` or
+`\r\n`, ASCII, at most 256 characters; a longer line is nothing, not its tail):
+
+```
+pace <intervalNanos> [node]     at most one step per interval in every sequence; 0 = no limit
+pause [node]
+resume [node]
+step <n> [node]                 lets n steps through a paused gate; asked of a running program, stops it after n
+inherit <node>                  drops the node's setting: it goes by its parent's again
+```
+
+`node` is a node id of the trace (0 or absent: the global setting); a node gets a setting of its own with the first
+command about it, which starts as a copy of what governed the node and is independent from then on. There is **no
+reply**: what a command did comes back as a `PaceDef` in the stream, the same for every client, which is also how
+several clients agree. The last command wins. A client that has sent a well-formed command is a *controller* (that is
+what `FAIL_OPEN` is about). Unknown lines, unknown nodes and nodes that have ended are ignored. Intervals above a day
+are a day. In a JVM without a gate nobody reads what a client sends.

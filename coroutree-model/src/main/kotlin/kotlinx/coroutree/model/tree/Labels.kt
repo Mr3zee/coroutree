@@ -8,6 +8,7 @@ import kotlinx.coroutree.model.EventKind
 import kotlinx.coroutree.model.ExceptionInfo
 import kotlinx.coroutree.model.HandledBy
 import kotlinx.coroutree.model.NodeKind
+import kotlinx.coroutree.model.PaceDef
 import kotlinx.coroutree.model.PropagationDirection
 import kotlinx.coroutree.model.StackFrameDef
 
@@ -149,4 +150,48 @@ public fun TraceSnapshot.describe(event: Event, viewpoint: Long = 0): String {
         EventKind.FINISHED -> event.finalState.name.lowercase()
         EventKind.UNSPECIFIED -> "unknown event"
     }
+}
+
+/**
+ * A pace the way one says it: `2 events/s`, `1 event in 5 s`, `full speed`. It is a pace *per sequence* (events made
+ * by one flow, or happening to one node); parallel sequences each run at it.
+ */
+public fun paceLabel(intervalNanos: Long): String {
+    if (intervalNanos <= 0) return "full speed"
+    val perSecond = 1e9 / intervalNanos
+    if (perSecond < 0.95) return "1 event in ${rounded(intervalNanos / 1e9)} s"
+    val count = rounded(perSecond)
+    return "$count ${if (count == "1") "event" else "events"}/s"
+}
+
+/** To one decimal, and without it where it would be a zero or the number is large anyway. */
+private fun rounded(value: Double): String {
+    val tenths = Math.round(value * 10)
+    return if (value >= 100 || tenths % 10 == 0L) Math.round(value).toString() else "${tenths / 10}.${tenths % 10}"
+}
+
+/** A setting of the agent's gate in a few words: `paused`, `2 events/s`, `full speed`. */
+public fun PaceSetting.describe(): String = if (paused) "paused" else paceLabel(intervalNanos)
+
+/**
+ * One line for a change of the gate's settings, for the event log: what holds from here on, for whom, and, where it
+ * was not somebody's command, why.
+ */
+public fun TraceSnapshot.describe(change: PaceDef): String {
+    val whose = if (change.scopeNodeId == 0L) "" else "subtree of ${node(change.scopeNodeId)?.title ?: "node #${change.scopeNodeId}"}: "
+    val what = when {
+        change.dropped -> "follows the program's setting again"
+        change.paused && change.steps > 0 -> "paused, ${change.steps} ${if (change.steps == 1) "step" else "steps"} let through"
+        change.paused -> "paused"
+        change.intervalNanos > 0 -> "runs at ${paceLabel(change.intervalNanos)} per sequence"
+        else -> "runs at full speed"
+    }
+    val why = when (change.reason) {
+        PaceDef.Reason.CONFIG -> " (as configured)"
+        PaceDef.Reason.FAIL_OPEN -> " (nobody is in control any more)"
+        PaceDef.Reason.SHUTDOWN -> " (the JVM is shutting down)"
+        PaceDef.Reason.NODE_FINISHED -> " (the node has ended)"
+        PaceDef.Reason.CONTROLLER, PaceDef.Reason.UNSPECIFIED -> ""
+    }
+    return "execution control: $whose$what$why"
 }

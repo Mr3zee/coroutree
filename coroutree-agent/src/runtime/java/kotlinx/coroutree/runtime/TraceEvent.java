@@ -21,6 +21,10 @@ final class TraceEvent {
     int handledBy;
     int direction;
     int finalState;
+    /** How long the gate held this thread since its previous event. Always 0 without a gate. */
+    long heldNanos;
+    /** Not the first event of its step: there was no program code between the previous event of this thread and this one. */
+    boolean sameStep;
 
     TraceEvent(long nodeId, int kind, long threadNodeId) {
         this.nodeId = nodeId;
@@ -60,6 +64,24 @@ final class TraceEvent {
         String newValue;
         boolean added;
         boolean removed;
+    }
+
+    /**
+     * A setting of the gate as it is from now on. Travels through the queue like an event but takes no sequence number:
+     * {@code afterSeq}, the latest one handed out when it was made, says where among the events it belongs.
+     */
+    static final class PaceDef {
+        long timeNanos;
+        long afterSeq;
+        /** 0: the global setting. */
+        long scopeNodeId;
+        long intervalNanos;
+        boolean paused;
+        /** Permits this change granted ({@code step n}), 0 for any other. */
+        int steps;
+        int reason;
+        /** The node's setting is gone; it goes by its parent's again. */
+        boolean dropped;
     }
 
     /** A diagnostic message travels through the same queue so that it lands in the trace in order. */

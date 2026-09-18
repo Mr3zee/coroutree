@@ -23,9 +23,11 @@ import java.util.Properties
 public class CoroutreePlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val extension = project.extensions.create(EXTENSION, CoroutreeExtension::class.java)
-        extension.enabled.convention(project.providers.gradleProperty("coroutree").map { it != "false" }.orElse(false))
+        extension.enabled.convention(false)
         extension.stackDepth.convention(32)
         extension.live.enabled.convention(true)
+        extension.pace.enabled.convention(true)
+        extension.pace.startPaused.convention(false)
 
         val agent = project.configurations.create(AGENT_CONFIGURATION) { configuration ->
             configuration.description = "The coroutree agent jar attached to forked JVMs."
@@ -75,7 +77,9 @@ public class CoroutreePlugin : Plugin<Project> {
         dependencyIndexes: FileCollection,
         dataDirectory: Provider<String>,
     ) {
-        val enabled = extension.enabled
+        // What the command line says wins over what the build script says, see CommandLine.
+        val commandLine = CommandLine(project.providers)
+        val enabled = commandLine.enabled(extension.enabled)
         val buildId = project.gradle.sharedServices.registerIfAbsent(BuildIdService.NAME, BuildIdService::class.java) {}
 
         val arguments = project.objects.newInstance(AgentArgumentProvider::class.java)
@@ -86,7 +90,10 @@ public class CoroutreePlugin : Plugin<Project> {
         // Gradle does not reliably find the producers of files that hide behind a provider like the two above
         // (an included build's agent jar was not built, the index task was dropped), so they are named outright.
         task.dependsOn(enabled.map<Any> { if (it) listOf(agent, indexTask, dependencyIndexes) else emptyList<Any>() })
-        arguments.live.set(extension.live.enabled)
+        arguments.live.set(commandLine.boolean(CommandLine.LIVE, extension.live.enabled))
+        arguments.pace.set(commandLine.boolean(CommandLine.PACE, extension.pace.enabled))
+        arguments.paceStartPaused.set(commandLine.boolean(CommandLine.START_PAUSED, extension.pace.startPaused))
+        arguments.paceEventsPerSecond.set(commandLine.eventsPerSecond(extension.pace.eventsPerSecond))
         arguments.stackDepth.set(extension.stackDepth)
         arguments.includedPackages.set(extension.includedPackages)
         arguments.excludedPackages.set(extension.excludedPackages)

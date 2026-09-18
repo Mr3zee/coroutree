@@ -7,12 +7,12 @@ worst gaps: coroutines without a Job, source maps of inlined code), M2–M6
 (Java extras/Flow/scrubber, static analysis, points-to, overlay, virtual time) are not started. **M1.1, a correction, is done
 too:** the GUI draws the concurrency tree as a **graph** (top-down node-link diagram, cross-links as real edges; DESIGN
 §6.1) where M1 had built an indented outline. The model is a tree; "tree" never means a directory-like view in this
-project, and there is no outline anywhere in the GUI. **Next is M1.2, execution control** (DESIGN §3.1): the agent holds
+project, and there is no outline anywhere in the GUI. **M1.2, execution control, is done as well** (DESIGN §3.1): the agent holds
 the program at its events to slow it down, pause it and step it, globally or per subtree, set from the GUI over the live
 socket. A pace is per *sequence* (same flow or same node; concurrent coroutines count as parallel, threads do not define
-sequences); parallel sequences are never serialised. It starts with a spike. `docs/DESIGN.md` §12 records what M1 and
-M1.1 built, every place they refined the design, and the known gaps — read it before changing behaviour, and add to it when
-you decide something the design did not.
+sequences); parallel sequences are never serialised. `docs/DESIGN.md` §12 records what M1, M1.1 and M1.2 built, every
+place they refined the design (M1.2 departs from §3.1 in one: the wait is a sleep, not a park), and the known gaps — read
+it before changing behaviour, and add to it when you decide something the design did not.
 
 ## Commands
 
@@ -26,8 +26,9 @@ below is a `commandLine`; `projectRoot` is always the repository root (`samples/
 [":coroutree-integration-tests:test", "-PupdateGoldens"]           rewrite samples/golden/dynamic, then REVIEW the diff
 [":coroutree-gradle-plugin:check"]                                 unit + TestKit functional tests + validatePlugins
 [":coroutree-gui:test"] (+ "-PscreenshotTrace=/x.ctrace")          also renders coroutree-gui/build/screenshots/*.png — look at them
-[":coroutree-gui:run", "--args=--demo"]            background      GUI on a synthetic trace (--demo=live streams it)
+[":coroutree-gui:run", "--args=--demo"]            background      GUI on a synthetic trace (--demo=live streams it, with execution control)
 ["-p", "samples", "run", "-Psample=<Name>", "-Pcoroutree"]         a sample through the real plugin + agent
+      + "-Pcoroutree.pace.startPaused", "-Pcoroutree.pace.eventsPerSecond=2", "-Pcoroutree.pace=false", "-Pcoroutree.live=false"
 ["-p", "samples", "coroutreeView"]                 background      GUI on the latest trace / live session
 ["publishAllPublicationsToLocalRepository"]                        build/repo: consume it like a user would (~200 MB of GUI jars)
 ```
@@ -63,19 +64,29 @@ writer thread → `.ctrace` file. Live clients are threads that tail that file o
 - A node may be referenced before it is defined (a job is cancelled inside its own constructor; a thread is interrupted
   before `start`). Nodes are created on demand, *defined* by the constructor/start hook (`defined` flag).
 - Application code that the runtime calls (`toString`, `hashCode`) goes through `Describe` and is never trusted.
-- **From M1.2 a hook may wait in exactly one place: `Pace.await(flow, node)`** (DESIGN §3.1), after it has found the
-  node it is about and before it reads what it reports, decides or locks anything — never in `Tracer.emit` (events are
+- **A hook may wait in exactly one place: `Pace.await(ts, unit, node, other)`** (DESIGN §3.1, §12 "M1.2 as built"): the
+  unit the step happens in, the node it happens to, a second node it emits on or `null`. It comes after the hook has
+  found everybody it is about — finding (`threadNode`, `nodeOf`, `poolOf`) may emit a `DISCOVERED`, a step of its own
+  with its own `await`, so all of it comes first — and before it reads what it reports, decides or locks anything — never in `Tracer.emit` (events are
   emitted under `synchronized (node)` and `DISCOVERY_LOCK`), never for the writer or a reader. Stopping the program is
   ours to get right, the owner's top priority: the hold is **never recorded** (no `THREAD_BLOCKED`, interrupt, unmount,
   node state or "held" marker of our making; what is recorded is `heldNanos` and `PaceDef`) and **never disturbs state**
-  (interrupt flag cleared for the wait and restored, bookkeeping balanced, nothing thrown). The gate has no queue, no
-  owner thread and no lock: a held thread loops on volatile reads and its own `parkNanos` tick, so nothing can strand it,
-  and it fails open (tracing off, shutdown, last controller gone). Never introduce a global order of turns: a pace is a
+  (interrupt flag cleared for the wait and restored, bookkeeping balanced, nothing thrown, **the park permit untouched:
+  the wait is `Thread.sleep`, never `LockSupport.park*`** — a thread held inside the hook of its own `park()` would lose
+  an `unpark` that came before and hang). The gate has no queue, no owner thread and no lock: a held thread loops on
+  volatile reads and its own sleep tick, so nothing can strand it, and it fails open (tracing off, the *start* of the
+  JVM's shutdown sequence, last controller gone). Threads of the JVM itself (root thread group) are never held: the
+  Signal Dispatcher starts the SIGTERM handler with `Thread.start`. Whatever an agent thread runs to deliver a command
+  must not be blockable by a held thread either (no regex, no first-time class loading; warmed up at start). Never introduce a global order of turns: a pace is a
   minimum interval per sequence, measured between events (the program's own blocking counts), and parallel stays parallel — two coroutines on one thread included. The events of one hook
   call are one step and are never spread out; a hook that emits on a node of another sequence awaits that node too.
   With `pace=false` the gate does not exist (`Pace.GATE == null`), not merely stays open. The paced and the stepped
   corpus must match the unpaced goldens; every new hook names its `await` point (one that runs where a thread cannot
-  park has none).
+  wait has none). `Tracer.emit` records an ERROR for an event that did not pass the gate, and with `-Dcoroutree.debug`
+  (every test JVM) the agent checks at each thread's end that its blocking calls are balanced: both fail the goldens.
+  Time is not held: a sample whose tree rests on wall-clock margins is listed, with the reason, in
+  `PacedCorpusTest.WALL_CLOCK_SENSITIVE` — that is where a new sample with `sleep`-ordered threads or a `delay` outside an
+  event loop goes. The `PaceControl` sample is the program the end-to-end tests of execution control drive.
 
 **Bytecode is rewritten without recomputing frames** (`COMPUTE_MAXS` only, frames expanded on read), so transforming
 never loads classes. Inserted code must be branch-free; the single hand-written frame is in `MethodPatch.around`.

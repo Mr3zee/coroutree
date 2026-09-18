@@ -45,6 +45,7 @@ public final class TraceEncoder {
         for (String prefix : config.excludePackages) header.string(8, prefix);
         header.int64(9, startedAtEpochMillis);
         header.string(10, config.projectDir);
+        header.bool(11, config.hasGate());
         frame.endMessage(1, header);
         flushFrame();
     }
@@ -71,6 +72,21 @@ public final class TraceEncoder {
         message.int32(1, diagnostic.severity);
         message.string(2, diagnostic.message);
         frame.endMessage(4, message);
+        flushFrame();
+    }
+
+    void writePace(TraceEvent.PaceDef pace) throws IOException {
+        frame.reset();
+        ProtoWriter message = frame.beginMessage();
+        message.int64(1, pace.timeNanos);
+        message.int64(2, pace.afterSeq);
+        message.int64(3, pace.scopeNodeId);
+        message.int64(4, pace.intervalNanos);
+        message.bool(5, pace.paused);
+        message.int32(6, pace.steps);
+        message.int32(7, pace.reason);
+        message.bool(8, pace.dropped);
+        frame.endMessage(5, message);
         flushFrame();
     }
 
@@ -120,6 +136,8 @@ public final class TraceEncoder {
         e.int32(12, event.handledBy);
         e.int32(13, event.direction);
         e.int32(14, event.finalState);
+        e.int64(15, event.heldNanos);
+        e.bool(16, event.sameStep);
         frame.endMessage(2, e);
         flushFrame();
     }

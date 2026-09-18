@@ -13,6 +13,7 @@ import kotlinx.coroutree.gui.source.SessionInfo
 import kotlinx.coroutree.gui.source.TraceSource
 import kotlinx.coroutree.gui.ui.App
 import kotlinx.coroutree.gui.ui.CoroutreeTheme
+import kotlinx.coroutree.gui.ui.controlKeyOf
 import kotlinx.coroutree.model.TraceFormat
 import java.awt.FileDialog
 import java.awt.Frame
@@ -39,7 +40,13 @@ fun main(args: Array<String>) {
             }
         }
         val title = state.current?.feed?.source?.title?.let { "coroutree — $it" } ?: "coroutree"
-        Window(onCloseRequest = ::exitApplication, title = title, state = rememberWindowState(size = DpSize(1360.dp, 860.dp))) {
+        Window(
+            onCloseRequest = ::exitApplication,
+            title = title,
+            state = rememberWindowState(size = DpSize(1360.dp, 860.dp)),
+            // Wherever the focus is: Space pauses and resumes the program, → steps it (when there is one to control).
+            onPreviewKeyEvent = { event -> controlKeyOf(event)?.let { key -> state.current?.viewModel?.handleKey(key) } ?: false },
+        ) {
             CoroutreeTheme {
                 App(
                     state,

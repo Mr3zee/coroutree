@@ -73,6 +73,13 @@ public final class Wire {
     static final int CTX_EXCEPTION_HANDLER = 4;
     static final int CTX_OTHER = 5;
 
+    // PaceDef.Reason
+    static final int PACE_CONFIG = 1;
+    static final int PACE_CONTROLLER = 2;
+    static final int PACE_FAIL_OPEN = 3;
+    static final int PACE_SHUTDOWN = 4;
+    static final int PACE_NODE_FINISHED = 5;
+
     // Diagnostic.Severity
     public static final int INFO = 1;
     public static final int WARNING = 2;

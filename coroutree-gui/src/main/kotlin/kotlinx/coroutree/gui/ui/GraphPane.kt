@@ -103,7 +103,7 @@ fun GraphPane(viewModel: TraceViewModel, onOpenFrame: (StackFrameDef) -> Unit, m
                     viewModel.selectNode(id)
                     state.zoomTo(id)
                 },
-            )
+            ) + subtreeControlItems(viewModel, id)
         }) {
             Box(
                 Modifier.fillMaxSize().clipToBounds().background(palette.canvas)
@@ -158,6 +158,17 @@ fun GraphPane(viewModel: TraceViewModel, onOpenFrame: (StackFrameDef) -> Unit, m
             }
         }
     }
+}
+
+/** Execution control for the subtree of a node, the same as the toolbar has for the program (DESIGN §6). */
+internal fun subtreeControlItems(viewModel: TraceViewModel, id: Long): List<ContextMenuItem> {
+    if (!viewModel.paceable || viewModel.snapshot.node(id)?.state?.isFinal != false) return emptyList()
+    val paused = viewModel.governingPace(id)?.paused == true
+    return listOfNotNull(
+        ContextMenuItem(if (paused) "Resume subtree" else "Pause subtree") { viewModel.togglePause(id) },
+        ContextMenuItem("Step subtree") { viewModel.step(id) },
+        if (viewModel.ownPace(id) != null) ContextMenuItem("Follow the program's speed") { viewModel.inherit(id) } else null,
+    )
 }
 
 @Composable

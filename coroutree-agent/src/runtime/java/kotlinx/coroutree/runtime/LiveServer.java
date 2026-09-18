@@ -22,6 +22,12 @@ import java.util.concurrent.locks.LockSupport;
  * has a thread that reads the trace file back and follows it like {@code tail -f}, which makes a late joiner and a
  * slow reader the same, unremarkable case and keeps both away from the thread that writes the trace.
  *
+ * With a gate in the JVM ({@link Pace}) the socket is two-way: after the token a client may send commands, one per
+ * line, read by a thread of its own per client. There is no reply; what a command did comes back in the stream, as
+ * it does for every other client. A client that has sent a command is a controller, and when the last controller
+ * goes away the gate falls back to what was configured: a GUI that crashed must not leave the program stopped.
+ * Without a gate nobody reads what a client sends.
+ *
  * Port and token are published in a session descriptor, {@code <sessions dir>/<pid>.json}, which is how the GUI finds
  * running JVMs. The descriptor is rewritten with {@code "ended": true} on orderly shutdown.
  */
@@ -57,7 +63,8 @@ final class LiveServer extends AgentThread {
             + ",\"taskPath\":" + json(config.taskPath)
             + ",\"buildId\":" + json(config.buildId)
             + ",\"command\":" + json(System.getProperty("sun.java.command", ""))
-            + ",\"startedAt\":" + startedAtEpochMillis;
+            + ",\"startedAt\":" + startedAtEpochMillis
+            + ",\"paceable\":" + config.hasGate();
         writeDescriptor(false);
     }
 
@@ -80,7 +87,7 @@ final class LiveServer extends AgentThread {
             }
             try {
                 socket.setSoTimeout(TOKEN_TIMEOUT_MILLIS);
-                if (readLine(socket.getInputStream()).equals(token)) {
+                if (token.equals(readLine(socket.getInputStream()))) {
                     socket.setSoTimeout(0);
                     socket.setTcpNoDelay(true);
                     Client client = new Client(socket);
@@ -88,6 +95,7 @@ final class LiveServer extends AgentThread {
                         clients.add(client);
                     }
                     client.start();
+                    if (Pace.GATE != null) new Control(socket, Pace.GATE).start();
                 } else {
                     socket.close();
                 }
@@ -164,12 +172,71 @@ final class LiveServer extends AgentThread {
         }
     }
 
+    /**
+     * Reads the commands of one client. It ends with the connection, whoever closes it, and with it ends the client's
+     * being a controller. It does nothing that a thread held at the gate could be in the way of: see {@link Pace#command}.
+     */
+    private static final class Control extends AgentThread {
+        private final Socket socket;
+        private final Pace gate;
+
+        Control(Socket socket, Pace gate) {
+            super("coroutree-live-control");
+            this.socket = socket;
+            this.gate = gate;
+        }
+
+        @Override
+        public void run() {
+            boolean controller = false;
+            try {
+                InputStream in = socket.getInputStream();
+                while (true) {
+                    String line = readLine(in);
+                    if (line == null) break;
+                    if (gate.command(line) && !controller) {
+                        controller = true;
+                        gate.controllerJoined();
+                    }
+                }
+            } catch (IOException | RuntimeException e) {
+                // The client went away.
+            } finally {
+                if (controller) gate.controllerLeft();
+            }
+        }
+    }
+
+    /**
+     * Once, at start-up, a connection to ourselves that says something: whatever accepting a client and reading its
+     * lines needs loaded is loaded now, while no thread of the program can be held in the middle of loading it.
+     */
+    void warmUp() {
+        try (Socket socket = new Socket()) {
+            socket.connect(server.getLocalSocketAddress(), 1000);
+            socket.setSoTimeout(1000);
+            socket.getOutputStream().write((token + "\nwarm-up\n").getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            socket.getInputStream().read();
+        } catch (IOException | RuntimeException ignored) {
+            // Nothing depends on it.
+        }
+    }
+
+    /**
+     * A line without its end, {@code null} at the end of the stream. A line longer than any token or command is
+     * nothing (not its tail, which might read like a command); one that never ends closes the connection.
+     */
     private static String readLine(InputStream in) throws IOException {
         StringBuilder line = new StringBuilder();
-        for (int c = in.read(); c >= 0 && c != '\n' && line.length() < 256; c = in.read()) {
-            if (c != '\r') line.append((char) c);
+        int c = in.read();
+        if (c < 0) return null;
+        int length = 0;
+        for (; c >= 0 && c != '\n'; c = in.read()) {
+            if (++length > 65536) throw new IOException("endless line");
+            if (c != '\r' && line.length() <= 256) line.append((char) c);
         }
-        return line.toString();
+        return line.length() > 256 ? "" : line.toString();
     }
 
     private void writeDescriptor(boolean ended) {

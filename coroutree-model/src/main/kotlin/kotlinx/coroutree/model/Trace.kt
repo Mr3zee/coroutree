@@ -22,6 +22,7 @@ public data class Frame(
     @ProtoNumber(2) val event: Event? = null,
     @ProtoNumber(3) val stackFrame: StackFrameDef? = null,
     @ProtoNumber(4) val diagnostic: Diagnostic? = null,
+    @ProtoNumber(5) val pace: PaceDef? = null,
 )
 
 /** Always the first frame. */
@@ -41,6 +42,11 @@ public data class TraceHeader(
     @ProtoNumber(9) val startedAtEpochMillis: Long = 0,
     /** Absolute path of the root project directory, empty when unknown. */
     @ProtoNumber(10) val projectDir: String = "",
+    /**
+     * The JVM has a gate (execution control): the agent can hold the program at its events. Then events carry
+     * [Event.heldNanos] and [Event.sameStep] and the trace has [PaceDef] frames; without it, it has none of the three.
+     */
+    @ProtoNumber(11) val paceable: Boolean = false,
 ) {
     public companion object {
         public const val FORMAT_VERSION: Int = 1
@@ -147,7 +153,55 @@ public data class Event(
     @ProtoNumber(13) val direction: PropagationDirection = PropagationDirection.UNSPECIFIED,
     /** For [EventKind.FINISHED]: one of COMPLETED, FAILED, CANCELLED. */
     @ProtoNumber(14) val finalState: NodeState = NodeState.UNSPECIFIED,
+    /**
+     * How long the agent held the thread at its gate since the thread's previous event (execution control). The hold
+     * is the tool's doing, not the program's: it is not an event and not a state, and this is where it is accounted for.
+     */
+    @ProtoNumber(15) val heldNanos: Long = 0,
+    /**
+     * Not the first event of its *step*: no program code ran between the previous event of [threadId] and this one
+     * (*launched* + *context changed*, *thrown* + *handled*, …). Steps are what a pace spaces and what `step n` counts.
+     * Only written by a JVM that is [TraceHeader.paceable].
+     */
+    @ProtoNumber(16) val sameStep: Boolean = false,
 )
+
+/**
+ * A setting of the agent's gate, as it is from this moment on: the global one ([scopeNodeId] 0) or that of a node,
+ * which holds for the node's structural subtree. Not an event (the program did nothing) and without a [Event.seq];
+ * [afterSeq] says where among the events it belongs.
+ */
+@Serializable
+public data class PaceDef(
+    /** Nanoseconds since the trace started. */
+    @ProtoNumber(1) val timeNanos: Long = 0,
+    /** The latest sequence number handed out when the setting changed; 0 before the first event. */
+    @ProtoNumber(2) val afterSeq: Long = 0,
+    @ProtoNumber(3) val scopeNodeId: Long = 0,
+    /** Minimum distance between two steps of one sequence; 0 = no limit. */
+    @ProtoNumber(4) val intervalNanos: Long = 0,
+    @ProtoNumber(5) val paused: Boolean = false,
+    /** Steps this change let through a paused gate (`step n`), 0 for any other change. */
+    @ProtoNumber(6) val steps: Int = 0,
+    @ProtoNumber(7) val reason: Reason = Reason.UNSPECIFIED,
+    /** The node's setting is gone and the node goes by its parent's again. Never set for the global setting. */
+    @ProtoNumber(8) val dropped: Boolean = false,
+) {
+    @Serializable
+    public enum class Reason {
+        @ProtoNumber(0) UNSPECIFIED,
+        /** What the run was configured to start with. */
+        @ProtoNumber(1) CONFIG,
+        /** A command of a live client. */
+        @ProtoNumber(2) CONTROLLER,
+        /** The last controller went away, or there never could be one: back to what was configured, nothing paused. */
+        @ProtoNumber(3) FAIL_OPEN,
+        /** The JVM is shutting down; everything that was held goes. */
+        @ProtoNumber(4) SHUTDOWN,
+        /** The node that carried the setting has ended. */
+        @ProtoNumber(5) NODE_FINISHED,
+    }
+}
 
 @Serializable
 public enum class EventKind {

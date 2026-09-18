@@ -50,6 +50,24 @@ class ScreenshotTest {
         }
     }
 
+    /** Execution control: a live session that somebody has paused, with one subtree slowed down and selected. */
+    @Test
+    fun executionControl() {
+        val receipt = snapshot.named("receipt")
+        val running = TraceStore().apply {
+            kotlinx.coroutree.gui.demo.DemoTrace.frames().forEach(::accept)
+            accept(kotlinx.coroutree.model.Frame(pace = kotlinx.coroutree.model.PaceDef(afterSeq = snapshot.events.last().seq, intervalNanos = 250_000_000, paused = true, reason = kotlinx.coroutree.model.PaceDef.Reason.CONTROLLER)))
+        }.snapshot()
+        for (dark in listOf(false, true)) {
+            val viewModel = TraceViewModel().also {
+                it.snapshot = running
+                it.commands = {}
+            }
+            viewModel.selectNode(receipt.id)
+            capture(if (dark) "execution-control-dark" else "execution-control-light") { Screen(viewModel, dark, FeedStatus.LIVE) }
+        }
+    }
+
     /** An event that names another node: both nodes and the edge between them stand out. */
     @Test
     fun eventSelected() {

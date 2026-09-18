@@ -5,9 +5,10 @@ A Gradle plugin that instruments Kotlin/JVM (and mixed Kotlin+Java) programs and
 and **dynamic** (what did happen, in historical order, on a live or recorded run).
 
 Status: **M1 (dynamic vertical slice) is implemented**, plus the two gaps it had left in §2.3 and §3 (source maps of inlined
-code, coroutines without a Job), and so is **M1.1 (GUI correction: graph view)**; **M1.2 (execution control: slowing down,
-pausing and stepping the running program, §3.1) is next**; M2–M6 are not started. §12 records what M1 and M1.1
-built, where they refined or departed from the text below, and what they left open. Items marked **[assumed]** were decided by the author
+code, coroutines without a Job), and so are **M1.1 (GUI correction: graph view)** and **M1.2 (execution control: slowing
+down, pausing and stepping the running program, §3.1)**; M2–M6 are not started. §12 records what M1, M1.1 and M1.2
+built, where they refined or departed from the text below, and what they left open. Where §3.1 and §12 "M1.2 as built"
+differ — the wait is a sleep, not a park — §12 is what the code does. Items marked **[assumed]** were decided by the author
 of this document without an explicit answer and need confirmation; M1 implemented the ones it touched as assumed.
 
 **Correction after M1.** Earlier versions of this document said "tree view" without saying what that looks like, and M1
@@ -188,14 +189,15 @@ Each hook's point is audited and listed in M1.2; every later hook names its own.
 - `await` is a loop on the waiting thread itself: read the governing setting, compute the release time, and either claim
   the slots of the flow and the node (a CAS on each one's last-step time; given back in the hook's `finally` if nothing was emitted, so a
   probe for a frame of a coroutine that is already running, or a nested blocking call, costs the sequence nothing) and go,
-  or `parkNanos` until then, at most a short tick (10 ms), and look again. A change of pace, a resume, a step permit
+  or sleep until then, at most a short tick (10 ms), and look again (a `Thread.sleep`, not a `parkNanos` as first
+  designed: a park would eat the thread's park permit, §12 "M1.2 as built"). A change of pace, a resume, a step permit
   (an atomic counter per scope), a fail-open are all picked up at the next tick.
 - So the gate has **no queue, no owner thread and no wake-up to lose**: a held thread depends on nothing but volatile
   reads and its own timer. Nothing can die and strand it.
 - A change takes effect for each thread at its next hook; a hook body already running when the user pauses completes.
 
 **Not recorded.** The wait happens with `inHook` set, so whatever it does is invisible by the rule that already keeps
-hooks from observing themselves: its `parkNanos` reports no `THREAD_BLOCKED` (and leaves `blockDepth` alone, enter and exit
+hooks from observing themselves: its sleep reports no `THREAD_BLOCKED` (and leaves `blockDepth` alone, enter and exit
 alike), restoring the interrupt flag (below) is not a `THREAD_INTERRUPTED`. A held node keeps the state it had; "paused" is
 a property of the session or of a subtree, drawn as such (§6), never a node state and never an event. When M2 hooks virtual
 thread mount / unmount, a virtual thread that unmounts because *we* parked it is not reported either. What is recorded is
@@ -209,7 +211,7 @@ event log; the scrubber (M2) and virtual time (M6) build on both.
   a held thread may own), no class loaded for the first time (`Agent.warmUp`). The control readers only write volatile
   settings. A held thread may own application monitors, its own `Thread` monitor (`start`), a class initialisation lock:
   that makes others wait for it like for any slow thread and cannot deadlock, because its release waits for none of them.
-- **Interrupts.** `parkNanos` returns at once for an interrupted thread, so a thread interrupted while held would spin.
+- **Interrupts.** A sleep refuses an interrupted thread, so a thread interrupted while held would spin.
   The wait clears the flag, remembers it, and sets it again before it returns to the program. No interrupt is lost or
   invented; the one observable difference is that `isInterrupted()` asked *by another thread during the hold* says false.
   Accepted, and the only known disturbance besides time itself (below).
@@ -426,7 +428,7 @@ samples/                 corpus of small programs, one per construct/edge case
   two-way selection with the details pane and the event log; open-in-IDE from the node; the always-drawn cross-links with
   legend and per-type toggles, `runsOn` for the selection; "show library / pools" toggle; animated reflow as a live trace grows.
   The outline (`TreePane`, `TreeRows`, expansion state) is deleted; the text `TreeRenderer` stays as the golden format.
-- **M1.2** *(next)* Execution control (§3.1), after M1.1 because it is watched in the graph. **Spike first**, on evidence as with §11.7:
+- **M1.2** *(done, see §12)* Execution control (§3.1), after M1.1 because it is watched in the graph. **Spike first**, on evidence as with §11.7:
   `Pace.await` in every hook, threads held on the `VirtualThreads`, `MonitorContention`, `BlockingInCoroutine` and
   `DispatcherThreads` samples, inside the JVMTI callbacks and `Thread.start`, interrupted while held — it has to show
   unchanged goldens and no hang before anything else is built. Then: the audited `await` point of every hook; per-flow and
@@ -597,3 +599,31 @@ unit = one dp at zoom 1, no Compose types); what the pane shows and how it chang
 
 Left open by M1.1: guard labels on structural edges (M3); the warning badge (M4); an incremental engine, should 10^5 nodes ever matter;
 the glide re-measures nothing but still places every composed box per frame, which is fine for hundreds.
+
+### M1.2 as built: execution control
+
+The gate of §3.1 exists: `Pace` in the agent's runtime, one `await` in every hook, the live socket two-way, `PaceDef` /
+`heldNanos` / `paceable` in both trace implementations, `pace {}` and the `-Pcoroutree.*` properties in the plugin, the
+controls in the GUI. The spike came first ([spikes/execution-control.md](spikes/execution-control.md)): the corpus paced
+and stepped against the unpaced goldens, with no hang on `VirtualThreads`, `MonitorContention`, `BlockingInCoroutine`
+and `DispatcherThreads`, before anything else was built. It also found what §3.1 had wrong, the first row below.
+
+| Where | Decision |
+|---|---|
+| §3.1 the wait — **departs from the design** | A held thread waits with **`Thread.sleep`, not `LockSupport.parkNanos`**. A park consumes the thread's park permit, and `LockSupport.park` is hooked: a thread that was unparked, then held inside the hook of its own `park()`, would have its permit eaten by the hold's first tick and block forever in the real park — a hang of our making. `sleep` on a platform thread does not touch the permit; on a virtual thread the JDK's `sleepNanos` parks inside and then *sets* the permit unconditionally, so the worst case is a spurious return from a later `park`, which `LockSupport` allows and every caller loops over. Interrupts as designed: `Thread.interrupted()` before each sleep and an `InterruptedException` out of it are remembered, the flag is set again before the hook returns; the restoring `interrupt()` and the sleep's own hooks run with `inHook` set and see nothing (they return before `blockDepth` is touched, enter and exit alike). Tested both ways, platform and virtual: an unpark made before the hold and one made during it both survive. |
+| §3.1 what `await` is given | `Pace.await(ts, unit, node, other)`: the execution unit the step happens *in* (`ts.currentUnit()`, else the thread's node), the node it happens *to*, and a second node the same hook call emits on (`completed`: *propagated to the caller*, which is another sequence when a scope ends on the thread of its last child). Slots claimed: `unit.flow()`, `node`, `other`; governing settings: the innermost one of each of the three, stricter wins (the largest interval among those not paused; a permit from every paused one, asked in a fixed order so that two steps never hold one each). For *resumed* and *suspended* the unit is the coroutine itself, not what is on the thread's books: with the thread standing in for it, the ten children of a single-threaded `runBlocking` would be spaced against each other through the flow rule. |
+| §3.1 exactness | All slots of a step are claimed with **one timestamp** (a CAS on each from the value the release time was computed from; rolled back and tried again on a lost race), and that timestamp is the `timeNanos` of the step's first event ("taken at release"). Two steps that share a sequence are therefore an interval apart *exactly*; the tests assert it with no tolerance over the whole paced corpus. Stamping at emit and advancing the slot afterwards would be off by the previous hook's run time, which is unbounded (the first stack capture loads classes). A "busy" marker on a slot between claim and emit was rejected: a waiter would depend on the claimer's progress, and the claimer runs application code (`toString`) that may block on a monitor the waiter owns. A waiter depends on the clock and on settings only. |
+| §3.1 steps in the trace | Added `Event.sameStep`: an event that is not the first of its step. A step is visible in the trace, `step 3` is tested as *exactly three steps*, and the GUI can tell what one press of → did. A step that claimed and then emitted nothing gives back its slots and its permits (to the counter object it took them from: pause / resume replace the object, so a late give-back cannot reopen a closed gate); `heldNanos` of such a hold is carried to the thread's next event, so sums per thread stay true. Done in `ThreadState.exitHook()`, which ends every hook. |
+| §3.1 the audit | Every hook: find everybody the step is about (finding may emit a `DISCOVERED` or a pool's `LAUNCHED` — a step of its own with its own `await`, before its lock), then `await`, then read, decide, lock, emit. Parent links are set before the `await`, so a new child of a paused subtree is held at its own *launched*. `Tracer.emit` records an internal ERROR for an event of a hook call that did not pass the gate, which fails every golden test: that is how the audit stays enforced for later hooks. The await points are listed in the spike document. One hook has none because it emits nothing: `shutdownBegins` (below). |
+| §3.1 threads that are never held | **Threads of the JVM itself** (the root thread group: Signal Dispatcher, Reference Handler, Finalizer, the "SIGTERM handler") are in the picture like any thread but pass the gate unheld and take no place in any sequence. Found by test: the Signal Dispatcher *starts* the SIGTERM handler thread, `Thread.start` is a step, and held there a paused program could not be ended with Ctrl-C, nor asked for a thread dump. |
+| §3.1 fail open at shutdown | The gate opens **when the shutdown sequence begins**, not when our shutdown hook gets to run: a new hook at the start of `ApplicationShutdownHooks.runHooks` (`Hooks.shutdownBegins`, optional in `HookTable`). Otherwise a thread that calls `System.exit` in a paused program is held at the `Thread.start` of somebody's shutdown hook with ours still unstarted. After that the gate stays open whatever is sent. |
+| §3.1 settings | A node's setting starts as a **copy of what governs the node** when the first command about it arrives and is independent from then on (so "pause everything, then `resume 42`" runs one subtree alone, and a `PaceDef` is always a complete setting). `step n` of a scope that is **not paused pauses it and grants n** (→ in a running session: stop after one more); on a paused scope permits add up; `pause` / `resume` zero them. Intervals are cut to one day (`last + interval` must not overflow). A fifth `PaceDef` reason, **node-finished**, for the setting dropped when its node ends; the set / finish race is closed Dekker-style on two volatiles. A thread node keeps its place in the structure after it ends (what it started lives on below it); a job node lets go of its parent. A well-formed command about an unknown node still makes its sender a controller. |
+| §3.1 agent threads | A control reader must not be blockable by a held thread either (a reader waiting for a class whose initializer is parked at the gate could never deliver `resume`): no regex and no first-time class loading on the command path; the parser, the hold path and the socket path (a throw-away loopback connection) are run once at start-up. Commands are applied under a lock that only agent threads and `nodeFinished` take, never a held thread, and nothing waits under it. |
+| §3.1 visible and accepted, added | The JDK's timer thread for virtual threads may be started by *our* sleep (on JDK 24+ from the carrier, outside any hook, so it cannot be told apart). Library infrastructure: hidden in the GUI by default, in no golden. |
+| §7 `-Pcoroutree` | As assumed: the command line wins for `enabled` too (`-Pcoroutree=false` switches off a script's `enabled = true`); anything but `false` still means on, as it always has. The other four are strict and fail the build by name. `startPaused` without live is warned about by the plugin *and* refused by the agent, which puts the WARNING into the trace. |
+| §6 GUI | Under the top bar of a live, paceable session: pause / resume, step, a logarithmic speed slider (one event in ten seconds … 1000 / s, then *no limit*), the setting as read back from the stream, a PAUSED chip, the *paused at start* banner; Space and → (window-wide). Per subtree: the node's context menu, a section of the details pane (with "we hold threads, not coroutines"), a mark on the box of a node that carries a setting — laid over a corner, so the layout does not change for it (tested). Changes of settings are rows of the event log, placed by `afterSeq`, in recorded traces too. `--demo=live` has a stand-in gate (`DemoGate`), so all of it can be tried without a JVM. |
+| §10 testing | As decided, all seven groups, plus what the work turned up. The paced and the stepped corpus against the unpaced goldens; **samples whose tree rests on wall-clock margins are listed by name with the reason** (`PacedCorpusTest.WALL_CLOCK_SENSITIVE`: `withTimeout(20)`, `delay` that starts the library's timer thread from inside itself, ordering by `sleep(50)`) — paced far below their margins, stepped on permits handed out in advance; the rest is stepped one round trip per step. `PaceTest` drives the gate without a program (exactness under contention, permits, subtrees, interrupts, the park permit, virtual threads pinned or not, commands). Against a real JVM (`PaceControl` sample): exact stepping with seven threads, live pacing with parallel sequences not serialised and two coroutines on one thread not spaced against each other, subtrees, an interrupt while held, a monitor owned while held, SIGTERM and `System.exit` while paused, writer failure while paused, controllers coming and going, the gate's absence proven with `jcmd` (no `Pace` instance, no control thread) and on the bytes of the trace. With `-Dcoroutree.debug` the agent checks at the end of every thread that its blocking calls are balanced. |
+
+**A bug of M1 found on the way.** The native monitor probe kept one "reported" flag per thread. The callbacks nest — `blockEnter` is Java code and may itself run into a contended monitor (a bin of a `ConcurrentHashMap`) while the monitor that started it all is still being waited for — and the inner *entered* cleared the flag, so the outer one went without its `blockExit`: the thread's books said "blocked" for the rest of its life and none of its blocking calls was reported again. Rare in M1, found by the new end-of-thread self-check. The flag is a depth now, and the exit is made even with an exception pending.
+
+Left open by M1.2: a pace is per sequence, but *we hold threads, not coroutines* (§3.1) — coroutines that share a thread cannot be held at the same time; time is not held (M6); the GUI's subtree controls have no way to set an exact number (the slider has two significant digits); `step` on a subtree whose steps also touch nodes outside it needs permits of both settings, which the GUI does not explain.

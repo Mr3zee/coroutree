@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutree.gui.AppState
 import kotlinx.coroutree.gui.OpenTrace
+import kotlinx.coroutree.gui.source.FeedStatus
 
 @Composable
 fun App(state: AppState, onChooseTraceFile: () -> Unit, onChooseDir: () -> Unit) {
@@ -44,5 +45,7 @@ private fun OpenTraceScreen(open: OpenTrace, state: AppState) {
     val failure by open.feed.failure.collectAsState()
     // The view model is what the panes read; hand it each published snapshot.
     LaunchedEffect(snapshot) { open.viewModel.snapshot = snapshot }
+    // Commands of execution control go where the trace comes from, for as long as there is a JVM at the other end.
+    LaunchedEffect(status) { open.viewModel.commands = if (status == FeedStatus.LIVE) open.feed::send else null }
     TraceScreen(open.viewModel, open.feed.source.title, status, failure, state::openInIde, state::close)
 }

@@ -7,12 +7,11 @@ import java.lang.ref.WeakReference;
  * (a coroutine without a Job: off its root frame, through a weak map), and must not keep application objects alive
  * longer than the job does.
  */
-final class JobNode {
+final class JobNode extends PaceNode {
     static final int NEW = 0;
     static final int RUNNING = 1;
     static final int SUSPENDED = 2;
 
-    final long id;
     /** Runs in the thread that created it, without dispatch, until its first suspension: coroutineScope and the like. */
     final boolean startsUndispatched;
     /** An exception it ends with stays inside until somebody awaits it: async. */
@@ -24,6 +23,13 @@ final class JobNode {
      */
     long rethrowsToId;
     JobNode rethrowsTo;
+
+    /**
+     * For the gate: the same caller as a node, thread or not. This node runs in the caller's place while the caller
+     * waits for it, so what it does and what the caller does are one line of execution, one flow.
+     * Cleared, like {@code paceParent}, when the node ends; {@code null} without a gate.
+     */
+    volatile PaceNode caller;
 
     /** Described context elements, for diffing a child's context against this one. */
     ContextEntry[] context;
@@ -50,9 +56,34 @@ final class JobNode {
     private volatile WeakReference<Throwable> received;
 
     JobNode(long id, boolean startsUndispatched, boolean deferred) {
-        this.id = id;
+        super(id);
         this.startsUndispatched = startsUndispatched;
         this.deferred = deferred;
+    }
+
+    @Override
+    PaceNode flow() {
+        PaceNode node = this;
+        while (node instanceof JobNode job) {
+            PaceNode next = job.caller;
+            if (next == null) break;
+            node = next;
+        }
+        return node;
+    }
+
+    @Override
+    boolean isFinished() {
+        return finished;
+    }
+
+    /** Whether {@link #markPropagated} would say no. For a hook that wants to know before it waits at the gate. */
+    synchronized boolean hasPropagated(Throwable exception) {
+        return propagated != null && propagated.get() == exception;
+    }
+
+    synchronized boolean hasStopped(Throwable exception) {
+        return stopped != null && stopped.get() == exception;
     }
 
     /** False if {@code exception} was already reported as propagated from this node to its parent. */

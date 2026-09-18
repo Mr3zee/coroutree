@@ -63,13 +63,50 @@ fun runUnderAgent(
     timeoutSeconds: Long = 120,
     monitorProbeAsAgentPath: Boolean = true,
     programArgs: List<String> = emptyList(),
-): AgentRun {
+): AgentRun = startUnderAgent(mainClass, classpath, agentOptions, jvmArgs, input, runName, monitorProbeAsAgentPath, programArgs).await(timeoutSeconds)
+
+/** A JVM under the agent that is still running: for tests that talk to it while it runs. */
+class AgentProcess(val mainClass: String, val process: Process, val runDir: File, val traceFile: File, private val outputFile: File) {
+    val output: String get() = outputFile.readText()
+
+    /** Where the agent publishes its live session, if the run was started with `live=true`. */
+    val sessionsDir: File get() = File(runDir, "sessions")
+
+    fun await(timeoutSeconds: Long = 120): AgentRun {
+        if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+            val dump = threadDump()
+            process.destroyForcibly().waitFor()
+            error("$mainClass did not finish in $timeoutSeconds s under the agent. Output so far:\n$output\n\nThreads:\n$dump")
+        }
+        return AgentRun(process.exitValue(), output, traceFile)
+    }
+
+    /** What every thread of the JVM is doing, from `jcmd`: what one wants to see of a program that hangs. */
+    fun threadDump(): String = runCatching {
+        val jcmd = File(File(TestEnvironment.java).parentFile, if (isWindows) "jcmd.exe" else "jcmd").path
+        val dump = ProcessBuilder(jcmd, process.pid().toString(), "Thread.print").redirectErrorStream(true).start()
+        dump.inputStream.bufferedReader().readText().also { dump.waitFor(20, TimeUnit.SECONDS) }
+    }.getOrElse { "no thread dump: $it" }
+}
+
+/** Starts [mainClass] in a fresh JVM under the agent and returns at once. With `live=true` its session goes to `<run dir>/sessions`. */
+fun startUnderAgent(
+    mainClass: String,
+    classpath: String = TestEnvironment.samplesClasspath,
+    agentOptions: Map<String, String> = emptyMap(),
+    jvmArgs: List<String> = emptyList(),
+    input: String? = null,
+    runName: String = mainClass.substringAfterLast('.'),
+    monitorProbeAsAgentPath: Boolean = true,
+    programArgs: List<String> = emptyList(),
+    keepStdinOpen: Boolean = false,
+): AgentProcess {
     val runDir = File(TestEnvironment.workDir, runName).apply {
         deleteRecursively()
         mkdirs()
     }
     val traceFile = File(runDir, "trace.ctrace")
-    val options = mapOf("trace.file" to traceFile.path, "include" to "samples", "live" to "false") + agentOptions
+    val options = mapOf("trace.file" to traceFile.path, "include" to "samples", "live" to "false", "sessions.dir" to File(runDir, "sessions").path) + agentOptions
     // The way the Gradle plugin starts a JVM: the native monitor probe, if the agent has one for this machine, as -agentpath.
     val probe = if (monitorProbeAsAgentPath) listOfNotNull(MonitorProbeLibrary.file?.let { "-agentpath:${it.path}" }) else emptyList()
     val command = listOf(TestEnvironment.java) + probe + jvmArgs + listOf(
@@ -83,14 +120,10 @@ fun runUnderAgent(
         .directory(runDir)
         .redirectErrorStream(true)
         .redirectOutput(outputFile)
-        .apply { if (input == null) redirectInput(ProcessBuilder.Redirect.from(File(if (isWindows) "NUL" else "/dev/null"))) }
+        .apply { if (input == null && !keepStdinOpen) redirectInput(ProcessBuilder.Redirect.from(File(if (isWindows) "NUL" else "/dev/null"))) }
         .start()
     if (input != null) process.outputStream.use { it.write(input.toByteArray()) }
-    if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
-        process.destroyForcibly().waitFor()
-        error("$mainClass did not finish in $timeoutSeconds s under the agent. Output so far:\n${outputFile.readText()}")
-    }
-    return AgentRun(process.exitValue(), outputFile.readText(), traceFile)
+    return AgentProcess(mainClass, process, runDir, traceFile, outputFile)
 }
 
 private val isWindows = System.getProperty("os.name").startsWith("Windows")

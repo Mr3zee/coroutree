@@ -5,6 +5,7 @@ import kotlinx.coroutree.model.Diagnostic
 import kotlinx.coroutree.model.Event
 import kotlinx.coroutree.model.NodeInfo
 import kotlinx.coroutree.model.NodeState
+import kotlinx.coroutree.model.PaceDef
 import kotlinx.coroutree.model.StackFrameDef
 import kotlinx.coroutree.model.TraceHeader
 
@@ -21,6 +22,10 @@ public class TraceSnapshot internal constructor(
     public val sources: SourceResolver,
     /** The producer is gone: the file ended or the live connection closed. */
     public val complete: Boolean,
+    /** Every change of the agent's gate (execution control), in the order of the stream. */
+    public val paceChanges: List<PaceDef> = emptyList(),
+    /** The gate's settings after the last of [paceChanges]. */
+    public val pace: PaceState = PaceState.NONE,
 ) {
     public fun frame(id: Int): StackFrameDef? = frames.getOrNull(id)
 
@@ -56,6 +61,43 @@ public class NodeSnapshot internal constructor(
     public val placeholder: Boolean,
 ) {
     public val id: Long get() = info.id
+}
+
+/** One setting of the gate: how far apart the steps of a sequence are kept, or that they are not let through at all. */
+public data class PaceSetting(
+    /** 0 = no limit. */
+    val intervalNanos: Long = 0,
+    val paused: Boolean = false,
+) {
+    /** Holds nobody. */
+    public val isOpen: Boolean get() = !paused && intervalNanos == 0L
+}
+
+/**
+ * The gate as the trace says it is: the settings as read back from the stream, not as somebody last asked for.
+ * It says what is *set*; which threads are being held at this moment nobody outside the JVM knows.
+ */
+public data class PaceState(
+    /** `null`: the trace has said nothing about a gate (the JVM has none, or has not got to say). */
+    val global: PaceSetting? = null,
+    /** Settings that nodes carry for their subtrees, by node id. */
+    val nodes: Map<Long, PaceSetting> = emptyMap(),
+) {
+    /** What governs [nodeId]: the innermost setting on its way to the root, else the global one. */
+    public fun governing(nodeId: Long, parentOf: (Long) -> Long?): PaceSetting? {
+        var id: Long? = nodeId
+        var hops = 0
+        while (id != null && id != 0L && hops++ < MAX_DEPTH) {
+            nodes[id]?.let { return it }
+            id = parentOf(id)
+        }
+        return global
+    }
+
+    public companion object {
+        public val NONE: PaceState = PaceState()
+        private const val MAX_DEPTH = 1_000_000
+    }
 }
 
 /** A non-tree edge. Stored on both of its ends. */

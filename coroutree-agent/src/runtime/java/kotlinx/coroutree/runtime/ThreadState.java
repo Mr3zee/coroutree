@@ -1,6 +1,7 @@
 package kotlinx.coroutree.runtime;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** What the runtime knows about the current thread. Thread-confined, reached through a thread local. */
 final class ThreadState {
@@ -23,6 +24,14 @@ final class ThreadState {
      */
     boolean inHook;
 
+    /**
+     * A thread of the JVM itself (Signal Dispatcher, Reference Handler, Finalizer, the "SIGTERM handler" the dispatcher
+     * starts): it is in the picture like any thread, but the gate never holds it. It is not the program's, and the JVM
+     * needs it: held at a paused gate inside the Thread.start of the SIGTERM handler, the dispatcher would never
+     * deliver the signal, and a paused program could not be ended with Ctrl-C — nor asked for a thread dump.
+     */
+    final boolean neverHeld;
+
     /** Node of this thread; created on first use. */
     ThreadNode node;
 
@@ -34,6 +43,41 @@ final class ThreadState {
     int blockEmittedAt;
     /** Coroutine named in the pending THREAD_BLOCKED, repeated in the matching THREAD_UNBLOCKED. */
     long blockOtherNodeId;
+
+    // --- the step this thread is making through the gate (Pace); all of it stays untouched without a gate ---
+
+    /** A hook call has passed the gate and not settled yet. {@link Tracer#emit} insists on it: no event without its await. */
+    boolean awaited;
+    /** The step has an event already: the next one of this hook call is part of the same step. */
+    boolean stepEmitted;
+    /** When the gate let the step go, which becomes the time of its first event; {@link Pace#NEVER} if it went through an open gate. */
+    long releaseNanos = Pace.NEVER;
+    /** How long this thread was held since its last event. Reported with its next event, whichever hook call that is in. */
+    long heldNanos;
+
+    // What the step took, to be given back if it turns out to have nothing to report: the slots of its sequences with
+    // the times they held before, and the counters it took permits from.
+    int claimedSlots;
+    int claimedPermits;
+    long claimTime;
+    final PaceNode[] claimSlot = new PaceNode[3];
+    final long[] claimPrevious = new long[3];
+    final AtomicLong[] claimPermit = new AtomicLong[3];
+
+    void claim(PaceNode slot, long previous) {
+        claimSlot[claimedSlots] = slot;
+        claimPrevious[claimedSlots++] = previous;
+    }
+
+    void claim(AtomicLong permits) {
+        claimPermit[claimedPermits++] = permits;
+    }
+
+    /** The end of every hook: the step, if there was one, is settled, and the thread is the program's again. */
+    void exitHook() {
+        if (awaited) Pace.settle(this);
+        inHook = false;
+    }
 
     // --- execution units running on this thread, innermost last, each with the blocking state of the unit below it ---
 
@@ -50,6 +94,8 @@ final class ThreadState {
         // Besides the agent's own threads: the JVM's pseudo-thread that waits for the program to end and then runs the
         // shutdown sequence. What it does is the JVM going down (and waiting for this agent's shutdown hook), not the program.
         this.inHook = thread instanceof AgentThread || "DestroyJavaVM".equals(thread.getName());
+        ThreadGroup group = thread.getThreadGroup(); // null once the thread has terminated
+        this.neverHeld = group != null && group.getParent() == null; // the root group, "system": where the JVM keeps its own
     }
 
     JobNode currentUnit() {

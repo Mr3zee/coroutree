@@ -25,6 +25,14 @@ public final class AgentConfig {
     public final boolean live;
     /** Report threads blocked on {@code synchronized}, which takes a native library (see MonitorProbe). */
     public final boolean monitor;
+    /**
+     * Execution control (DESIGN §3.1). {@code pace=false}: no gate in this JVM at all. {@code pace.paused}: held at the
+     * first event until a GUI resumes or steps; needs {@link #live}. {@code pace.events.per.second}: the pace the run
+     * starts with and falls back to, per sequence, a decimal number or {@code unlimited}; here as the interval it means.
+     */
+    public final boolean pace;
+    public final boolean pacePaused;
+    public final long paceIntervalNanos;
     public final String buildId;
     public final String taskPath;
     public final String projectDir;
@@ -48,6 +56,38 @@ public final class AgentConfig {
         excludePackages = prefixes(p.getProperty("exclude", ""));
         stackDepth = positiveInt(p, "stack.depth", 32);
         sourceIndex = readSourceIndex(p.getProperty("source.index", ""));
+        pace = Boolean.parseBoolean(p.getProperty("pace", "true"));
+        paceIntervalNanos = pace ? intervalOf(p.getProperty("pace.events.per.second")) : 0;
+        boolean paused = pace && Boolean.parseBoolean(p.getProperty("pace.paused", "false"));
+        if (paused && !live) {
+            problems.add("Ignored pace.paused: without the live socket (live=false) nothing could ever resume the program, so it runs");
+            paused = false;
+        }
+        pacePaused = paused;
+    }
+
+    /**
+     * Whether this JVM has a gate. Without the live socket nobody can ever send a command, and then there is one only
+     * for a pace that was configured.
+     */
+    public boolean hasGate() {
+        return pace && (live || paceIntervalNanos > 0);
+    }
+
+    private long intervalOf(String eventsPerSecond) {
+        if (eventsPerSecond == null) return 0;
+        String value = eventsPerSecond.trim();
+        if (value.isEmpty() || value.equalsIgnoreCase("unlimited")) return 0;
+        try {
+            double perSecond = Double.parseDouble(value);
+            if (perSecond > 0 && !Double.isInfinite(perSecond)) {
+                double interval = 1e9 / perSecond;
+                return interval >= Pace.MAX_INTERVAL_NANOS ? Pace.MAX_INTERVAL_NANOS : Math.max(1, Math.round(interval));
+            }
+        } catch (NumberFormatException ignored) {
+        }
+        problems.add("Ignored pace.events.per.second=" + eventsPerSecond + ", expected a positive number or 'unlimited': the program runs unpaced");
+        return 0;
     }
 
     public static AgentConfig parse(String agentArgs) {

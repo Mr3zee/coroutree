@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.focusable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,10 +25,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutree.gui.source.FeedStatus
@@ -52,10 +58,22 @@ fun TraceScreen(
     onOpenFrame: (StackFrameDef) -> Unit,
     onClose: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().background(palette.background)) {
-        TopBar(viewModel.snapshot.header, sourceTitle, status, onClose)
+    // Space and → control the program while there is one to control. The window hands keys over as well (Main); this
+    // is for whoever has clicked into the panes.
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Column(
+        Modifier.fillMaxSize().background(palette.background)
+            .focusRequester(focus).focusable()
+            .onPreviewKeyEvent { event -> controlKeyOf(event)?.let(viewModel::handleKey) ?: false },
+    ) {
+        TopBar(viewModel.snapshot.header, sourceTitle, status, paused = viewModel.paceable && viewModel.globalPace?.paused == true, onClose)
         Divider()
+        PaceBar(viewModel)
         if (failure != null) Banner("Could not read the trace: $failure", palette.failed, onDismiss = null)
+        if (viewModel.paceable && viewModel.pausedAtStart) {
+            Banner("Paused at start — resume or step. The program is held at its first event.", palette.suspended, onDismiss = null, tag = "paused-at-start")
+        }
         DiagnosticBanners(viewModel.snapshot.diagnostics)
 
         VerticalSplitPane(splitPaneState = rememberSplitPaneState(0.64f)) {
@@ -89,7 +107,7 @@ private fun SplitPaneScope.paneSplitter(vertical: Boolean) {
 }
 
 @Composable
-private fun TopBar(header: TraceHeader?, sourceTitle: String, status: FeedStatus, onClose: () -> Unit) {
+private fun TopBar(header: TraceHeader?, sourceTitle: String, status: FeedStatus, paused: Boolean, onClose: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().height(40.dp).background(palette.header).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -97,6 +115,7 @@ private fun TopBar(header: TraceHeader?, sourceTitle: String, status: FeedStatus
     ) {
         Label("coroutree", style = Type.title, color = palette.accent)
         StatusPill(status)
+        if (paused) Chip("PAUSED", palette.suspended, Modifier.testTag("paused"), Type.label)
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             val task = header?.taskPath?.ifEmpty { null }
             Label(task ?: sourceTitle, style = Type.code.copy(fontWeight = FontWeight.Medium), modifier = Modifier.weight(1f, fill = false))
@@ -144,9 +163,9 @@ private fun DiagnosticBanners(diagnostics: List<Diagnostic>) {
 }
 
 @Composable
-private fun Banner(text: String, color: Color, onDismiss: (() -> Unit)?) {
+private fun Banner(text: String, color: Color, onDismiss: (() -> Unit)?, tag: String = "banner") {
     Row(
-        Modifier.fillMaxWidth().background(if (color == palette.warningText) palette.warningSurface else color.copy(alpha = 0.12f)).padding(horizontal = 12.dp, vertical = 6.dp).testTag("banner"),
+        Modifier.fillMaxWidth().background(if (color == palette.warningText) palette.warningSurface else color.copy(alpha = 0.12f)).padding(horizontal = 12.dp, vertical = 6.dp).testTag(tag).semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {

@@ -16,7 +16,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutree.gui.demo.DemoGate
 import kotlinx.coroutree.gui.demo.DemoTrace
+import kotlinx.coroutree.gui.view.PaceCommand
 import kotlinx.coroutree.model.Frame
 import kotlinx.coroutree.model.TraceReader
 import kotlinx.coroutree.model.tree.TraceSnapshot
@@ -26,6 +28,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 
 enum class FeedStatus(val label: String) {
     CONNECTING("connecting"),
@@ -47,10 +50,14 @@ enum class FeedStatus(val label: String) {
  *
  * Snapshots go out at most every [publishIntervalMillis] however fast frames arrive: a snapshot costs a copy of the
  * node map, and nobody can watch more than a few updates a second anyway.
+ *
+ * While it is attached to a running JVM the feed is also the way to it: [send] writes a command of execution control to
+ * the same socket the trace comes from. Nothing comes back for a command but the trace itself, which says what the
+ * agent's gate is set to from then on.
  */
 class TraceFeed(
     val source: TraceSource,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val publishIntervalMillis: Long = 100,
     private val demoFrameDelayMillis: Long = 40,
@@ -63,6 +70,34 @@ class TraceFeed(
     val snapshot: StateFlow<TraceSnapshot> get() = _snapshot
     val status: StateFlow<FeedStatus> get() = _status
     val failure: StateFlow<String?> get() = _failure
+
+    // Where commands go while the feed is live: the socket of the session, or the stand-in gate of the demo.
+    private val commandLock = Any()
+    @Volatile
+    private var commands: OutputStream? = null
+    @Volatile
+    private var demoGate: DemoGate? = null
+
+    /**
+     * Sends a command of execution control to the JVM this feed follows. Does nothing when there is no JVM at the other
+     * end (a recorded trace, a session that has ended); whether the JVM has a gate at all is for the caller to know
+     * from the trace header.
+     */
+    fun send(command: PaceCommand) {
+        demoGate?.let { return it.command(command) }
+        val out = commands ?: return
+        // Not on the caller's thread, which is the UI's: a socket write may block.
+        scope.launch(ioDispatcher) {
+            try {
+                synchronized(commandLock) {
+                    out.write((command.line + "\n").toByteArray(Charsets.US_ASCII))
+                    out.flush()
+                }
+            } catch (_: IOException) {
+                // The JVM is gone; the read side notices and ends the feed.
+            }
+        }
+    }
 
     private val job: Job = scope.launch(ioDispatcher) {
         val publisher = launch {
@@ -99,9 +134,17 @@ class TraceFeed(
         when (val source = source) {
             is TraceSource.Demo -> {
                 _status.value = if (source.live) FeedStatus.LIVE else FeedStatus.LOADING
-                for (frame in DemoTrace.frames()) {
-                    accept(frame)
-                    if (source.live && frame.event != null) delay(demoFrameDelayMillis)
+                val gate = if (source.live) DemoGate(::accept).also { demoGate = it } else null
+                try {
+                    for (frame in DemoTrace.frames()) {
+                        if (gate != null && frame.pace != null) continue // played live, the gate speaks for itself
+                        frame.event?.let { gate?.await(it) }
+                        accept(frame)
+                        if (frame.header != null) gate?.announce()
+                        if (source.live && frame.event != null) delay(demoFrameDelayMillis)
+                    }
+                } finally {
+                    demoGate = null
                 }
                 return if (source.live) FeedStatus.ENDED else FeedStatus.RECORDED
             }
@@ -110,12 +153,15 @@ class TraceFeed(
                 val socket = if (source.info.ended) null else runCatching { source.info.connect() }.getOrNull()
                 if (socket != null) {
                     _status.value = FeedStatus.LIVE
+                    commands = socket.getOutputStream()
                     val frames = try {
                         pump(socket, socket.getInputStream())
                     } catch (e: IOException) {
                         // A JVM that is killed resets the connection instead of closing it. Either way it is gone.
                         currentCoroutineContext().ensureActive()
                         accepted
+                    } finally {
+                        commands = null
                     }
                     if (frames > 0) return FeedStatus.ENDED
                     // Connected, but to something that hung up without a word: a stale descriptor whose port now

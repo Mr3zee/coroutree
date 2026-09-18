@@ -1,8 +1,7 @@
 package kotlinx.coroutree.runtime;
 
 /** Runtime state of a thread node. */
-final class ThreadNode {
-    final long id;
+final class ThreadNode extends PaceNode {
     /** Died of an uncaught exception. */
     volatile boolean failed;
     volatile boolean finished;
@@ -10,6 +9,11 @@ final class ThreadNode {
     volatile boolean defined;
 
     ThreadNode(long id) {
-        this.id = id;
+        super(id);
+    }
+
+    @Override
+    boolean isFinished() {
+        return finished;
     }
 }

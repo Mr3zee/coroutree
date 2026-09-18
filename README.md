@@ -9,13 +9,33 @@ A Gradle plugin attaches a Java agent to the JVMs your build forks; a desktop GU
 Design: [docs/DESIGN.md](docs/DESIGN.md). Trace format: [docs/TRACE_FORMAT.md](docs/TRACE_FORMAT.md).
 **Status: milestone 1 of 5** — the dynamic vertical slice, with the GUI drawing the tree as a graph (M1.1 in the
 design): a top-down node-link diagram, boxes coloured by state, cross-links (*launches*, *cancels*, *interrupts*, and
-*runs on* for the selected node) as edges of their own. There is no static mode yet.
+*runs on* for the selected node) as edges of their own — and with **execution control** (M1.2): a running program can be
+slowed down, paused and stepped from the GUI. There is no static mode yet.
 
 In the graph: drag or scroll to pan, Ctrl/⌘ + scroll to zoom, *Fit* and *Selection* in the toolbar, the minimap once the
 graph is bigger than the pane. The legend switches each kind of cross-link on and off; *library / pools* brings in the
 dispatcher pools and library-internal coroutines that are left out by default. Rest on a box for its source line and
 context, right-click it to open its source in the IDE. Whatever the trace, boxes never overlap and no two lines run on
 or along each other: that is a tested invariant of the layout engine (DESIGN §6.2), not a matter of luck.
+
+**Slowing down, pausing, stepping.** While the GUI follows a running program, the bar under the title has *Pause* /
+*Resume* (Space), *Step* (→) and a speed slider, from one event in ten seconds to no limit. The same for one subtree is
+in a node's context menu and in the details pane; a node that carries a setting of its own has a small mark on its box.
+A few things worth knowing:
+
+- A pace is **per sequence**: at "one event per second" every coroutine and every thread shows at most one event a second,
+  and ten of them running in parallel show ten. Nothing is serialised; two coroutines that share a thread are two
+  sequences. Time the program spends blocked or suspended of its own accord counts, so a coroutine that resumes after
+  `delay(5000)` is not held at all.
+- What is stopped is **events, not instructions**: a thread is held when it reaches its next event (a launch, a
+  suspension, a blocking call, …). A loop that computes without ever reaching one is not stopped by *Pause*.
+- **We hold threads, not coroutines.** A held coroutine keeps the thread it is on, and whatever else would run there
+  waits with it; pausing one child of a single-threaded `runBlocking` stops that event loop.
+- **Time is not held.** Pause for ten seconds inside `withTimeout(1000)` and it fires on release; slowing a program down
+  changes how its parallel parts interleave, which can hide or provoke a race.
+- The hold is never in the trace (no *blocked*, no event, no state): the trace says what the program did. What it does
+  say is how long each thread was held, and every change of the settings, which the event log shows.
+- If the GUI goes away, the program runs on at its configured pace; Ctrl-C ends a paused program as ever.
 
 ## Trying it
 
@@ -25,6 +45,10 @@ or along each other: that is a tested invariant of the layout engine (DESIGN §6
 
 ./gradlew -p samples run -Psample=Interactive -Pcoroutree             # a program that runs until you press Enter…
 ./gradlew -p samples coroutreeView                                    # …watched live from a second terminal
+
+./gradlew -p samples run -Psample=PaceControl -Pcoroutree -Pcoroutree.pace.startPaused   # held at its first event…
+./gradlew -p samples coroutreeView                                    # …until you resume or step it here ("stop" + Enter ends it)
+./gradlew :coroutree-gui:run --args=--demo=live                       # the controls on a synthetic session, no JVM needed
 ```
 
 `samples/` is a standalone build that uses the plugin, the agent and the GUI straight from this checkout. Its programs
@@ -47,10 +71,20 @@ coroutree {
     includePackages("com.acme")             // what counts as project code; default: the packages of the project's sources
     excludePackages("com.acme.generated")
     live { enabled = true }                 // serve the trace to the GUI while the program runs
+    pace {                                  // execution control; controlling it from the GUI needs live
+        enabled = true                      // false: the JVM has no gate at all, and the GUI shows no controls
+        startPaused = false                 // true: held at the first event until a GUI resumes or steps
+        eventsPerSecond = 0.2               // the pace the run starts with, per sequence; unset = unlimited
+    }
     stackDepth = 32
     ideCommand = "idea --line {line} {path}" // how the GUI opens a source location; default: IntelliJ's built-in server
 }
 ```
+
+What one wants to change for a single run is a Gradle property, and **the command line wins over the build script**, in
+both directions: `-Pcoroutree` / `-Pcoroutree=false`, `-Pcoroutree.live=false`, `-Pcoroutree.pace=false`,
+`-Pcoroutree.pace.startPaused`, `-Pcoroutree.pace.eventsPerSecond=2` (or `unlimited`). A value that does not parse fails
+the build. Started by hand, the agent takes `live`, `pace`, `pace.paused` and `pace.events.per.second` like its other options.
 
 Apply it in every module whose sources should be navigable. Traces and live-session descriptors land in the root
 project's `build/coroutree/`, grouped by build invocation; `coroutreeView` opens the newest.

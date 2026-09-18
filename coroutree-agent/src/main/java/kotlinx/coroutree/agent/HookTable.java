@@ -135,6 +135,9 @@ final class HookTable {
             .method(enter("interrupt", "()V", interrupt))
             .method(enter("dispatchUncaughtException", "(" + THROWABLE + ")V",
                 new HookCall("threadUncaught", "(" + THREAD + THROWABLE + ")V", self(), arg(0))).optional());
+        // Where the JVM's shutdown sequence starts the shutdown hooks: the gate of execution control opens before the first one.
+        on("java/lang/ApplicationShutdownHooks")
+            .method(enter("runHooks", "()V", new HookCall("shutdownBegins", "()V")).optional());
         // A virtual thread overrides start and interrupt without calling up, and does not end in Thread.exit.
         on("java/lang/VirtualThread")
             .method(enter("start", "(Ljdk/internal/vm/ThreadContainer;)V", start).optional())

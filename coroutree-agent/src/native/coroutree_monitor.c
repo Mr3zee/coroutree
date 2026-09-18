@@ -15,6 +15,7 @@
  * Either way nothing is reported until Java calls MonitorProbe.enable(Hooks.class).
  */
 #include <jvmti.h>
+#include <stdint.h>
 #include <string.h>
 
 #define PROBE_CLASS_SIGNATURE "Lkotlinx/coroutree/runtime/MonitorProbe;"
@@ -25,24 +26,40 @@ static jclass hooks_class;
 static jmethodID block_enter;
 static jmethodID block_exit;
 
-/* Marks a thread whose contended enter was reported, so that only those get the matching exit. */
-static const char REPORTED;
-
+/*
+ * Thread-local storage holds the depth of contended enters that were reported and not yet matched, as an integer.
+ *
+ * Depth, not a flag, because the callbacks nest: blockEnter is Java code, and Java code may itself run into a
+ * contended monitor (a bin of a ConcurrentHashMap is enough) while the monitor that started it all is still being
+ * waited for. With a flag, the inner "entered" cleared it and the outer one went without its blockExit: the thread's
+ * books said "blocked" for the rest of its life and none of its blocking calls was reported again. Only the outermost
+ * pair calls into Java. The inner ones happen inside our own hook, which would not report them anyway.
+ *
+ * (A thread that is held at the agent's gate is held inside blockEnter or blockExit, that is, inside these callbacks,
+ * for as long as the user likes. Nothing here minds: no lock is held across the call, and the depth is the thread's own.)
+ */
 static void JNICALL on_contended_enter(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jobject monitor) {
+    void *depth = NULL;
     if (hooks_class == NULL || (*jni)->ExceptionCheck(jni)) return;
-    if ((*jvmti)->SetThreadLocalStorage(jvmti, thread, &REPORTED) != JVMTI_ERROR_NONE) return;
+    if ((*jvmti)->GetThreadLocalStorage(jvmti, thread, &depth) != JVMTI_ERROR_NONE) return;
+    if ((*jvmti)->SetThreadLocalStorage(jvmti, thread, (void *) ((intptr_t) depth + 1)) != JVMTI_ERROR_NONE) return;
+    if (depth != NULL) return;
     (*jni)->CallStaticVoidMethod(jni, hooks_class, block_enter, (jint) BLOCK_MONITOR);
     if ((*jni)->ExceptionCheck(jni)) (*jni)->ExceptionClear(jni); /* hooks do not throw; belt and braces */
 }
 
 static void JNICALL on_contended_entered(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jobject monitor) {
-    void *reported = NULL;
+    void *depth = NULL;
     if (hooks_class == NULL) return;
-    if ((*jvmti)->GetThreadLocalStorage(jvmti, thread, &reported) != JVMTI_ERROR_NONE || reported == NULL) return;
-    (*jvmti)->SetThreadLocalStorage(jvmti, thread, NULL);
-    if ((*jni)->ExceptionCheck(jni)) return;
+    if ((*jvmti)->GetThreadLocalStorage(jvmti, thread, &depth) != JVMTI_ERROR_NONE || depth == NULL) return;
+    (*jvmti)->SetThreadLocalStorage(jvmti, thread, (void *) ((intptr_t) depth - 1));
+    if ((intptr_t) depth != 1) return;
+    /* The exit is owed whatever else is going on: an enter without it leaves the thread "blocked" for good. */
+    jthrowable pending = (*jni)->ExceptionOccurred(jni);
+    if (pending != NULL) (*jni)->ExceptionClear(jni);
     (*jni)->CallStaticVoidMethod(jni, hooks_class, block_exit);
     if ((*jni)->ExceptionCheck(jni)) (*jni)->ExceptionClear(jni);
+    if (pending != NULL) (*jni)->Throw(jni, pending);
 }
 
 /* boolean MonitorProbe.enable(Class hooks) */

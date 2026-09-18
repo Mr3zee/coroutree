@@ -55,6 +55,7 @@ import kotlinx.coroutree.gui.view.label
 import kotlinx.coroutree.model.ContextElementKind
 import kotlinx.coroutree.model.NodeKind
 import kotlinx.coroutree.model.tree.NodeSnapshot
+import kotlinx.coroutree.model.tree.PaceSetting
 import kotlinx.coroutree.model.tree.describe
 import kotlinx.coroutree.model.tree.shortLocation
 import kotlin.math.roundToInt
@@ -77,6 +78,7 @@ fun GraphNodes(viewModel: TraceViewModel, state: GraphViewState, boxes: List<Nod
                         dimmed = box.node.dimmed,
                         selected = box.id == viewModel.selectedNodeId,
                         related = box.id in highlight.nodes,
+                        pace = viewModel.ownPace(box.id),
                         onSelect = { viewModel.selectNode(box.id) },
                         hover = hover,
                         modifier = Modifier.graphicsLayer { alpha = state.alpha(box.id) },
@@ -112,7 +114,7 @@ fun GraphNodes(viewModel: TraceViewModel, state: GraphViewState, boxes: List<Nod
  * and by nothing else. Everything longer (site, context, thread) is in the hover card and the details pane.
  */
 @Composable
-private fun NodeView(node: NodeSnapshot, dimmed: Boolean, selected: Boolean, related: Boolean, onSelect: () -> Unit, hover: HoverCardState, modifier: Modifier) {
+private fun NodeView(node: NodeSnapshot, dimmed: Boolean, selected: Boolean, related: Boolean, pace: PaceSetting?, onSelect: () -> Unit, hover: HoverCardState, modifier: Modifier) {
     val color = palette.of(node.state)
     val shape = RoundedCornerShape(6.dp)
     val interaction = remember { MutableInteractionSource() }
@@ -125,8 +127,11 @@ private fun NodeView(node: NodeSnapshot, dimmed: Boolean, selected: Boolean, rel
         }
     }
     val fade = if (dimmed) 0.5f else 1f
+    // The mark of a setting lies over a corner of the box: the box is as large as the layout made it, with or without.
+    // The lower right one, beside the state, which is a short word; the title above it takes the whole width.
+    Box(modifier.fillMaxSize()) {
     Column(
-        modifier.fillMaxSize()
+        Modifier.fillMaxSize()
             .clip(shape)
             .background(palette.surface)
             // Finished nodes recede: nothing is going on there any more.
@@ -143,7 +148,7 @@ private fun NodeView(node: NodeSnapshot, dimmed: Boolean, selected: Boolean, rel
             .testTag("node-${node.id}")
             .semantics {
                 this.selected = selected
-                stateDescription = node.state.label + if (related) ", highlighted" else ""
+                stateDescription = node.state.label + (if (related) ", highlighted" else "") + (pace?.let { ", subtree " + it.describe() } ?: "")
             }
             .padding(horizontal = 8.dp),
         verticalArrangement = Arrangement.Center,
@@ -157,6 +162,8 @@ private fun NodeView(node: NodeSnapshot, dimmed: Boolean, selected: Boolean, rel
             Box(if (node.state.isFinal) dot.border(1.5.dp, color.copy(alpha = fade), CircleShape) else dot.background(color.copy(alpha = fade)))
             Label(node.state.label, style = Type.small.copy(fontWeight = FontWeight.Medium), color = color.copy(alpha = fade))
         }
+    }
+    if (pace != null) PaceMarker(pace, Modifier.align(Alignment.BottomEnd).padding(4.dp).testTag("pace-marker-${node.id}"))
     }
 }
 
@@ -250,6 +257,10 @@ fun HoverCard(viewModel: TraceViewModel, state: GraphViewState, hover: HoverCard
         for (change in diff.take(4)) Label(change.describe(), style = Type.codeSmall, color = palette.contextChange)
         if (node.runsOn != 0L && node.info.kind != NodeKind.THREAD) {
             Label("on " + (snapshot.node(node.runsOn)?.graphTitle ?: "thread #${node.runsOn}"), style = Type.codeSmall, color = palette.textDim)
+        }
+        viewModel.ownPace(id)?.let { pace ->
+            Label("subtree " + settingText(pace), Modifier.testTag("card-pace"), Type.small.copy(fontWeight = FontWeight.Medium), if (pace.paused) palette.suspended else palette.accent)
+            if (node.info.kind != NodeKind.THREAD) Label(THREADS_NOT_COROUTINES, style = Type.small, color = palette.textDim, maxLines = 3)
         }
     }
 }

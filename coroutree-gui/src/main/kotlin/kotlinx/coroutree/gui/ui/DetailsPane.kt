@@ -149,6 +149,7 @@ private fun LazyListScope.nodeDetails(snapshot: TraceSnapshot, node: NodeSnapsho
             if (node.placeholder) Property("Note", "never defined in the trace; known only by reference")
         }
     }
+    executionControl(node, viewModel)
     if (info.context.isNotEmpty()) {
         item { SectionTitle("Context") }
         item {
@@ -184,6 +185,44 @@ private fun LazyListScope.nodeDetails(snapshot: TraceSnapshot, node: NodeSnapsho
             Spacer(Modifier.width(8.dp))
             Label(snapshot.describe(event, viewpoint = node.id), Modifier.weight(1f))
         }
+    }
+}
+
+/**
+ * Execution control for the subtree of the selected node: what holds for it and whose setting that is, and, while the
+ * program runs and has a gate, the same controls the toolbar has for the whole program. A recorded trace only says
+ * what was set.
+ */
+private fun LazyListScope.executionControl(node: NodeSnapshot, viewModel: TraceViewModel) {
+    val own = viewModel.ownPace(node.id)
+    val controllable = viewModel.paceable && !node.state.isFinal
+    if (own == null && !controllable) return
+    val governing = viewModel.governingPace(node.id)
+    item { SectionTitle("Execution control") }
+    item {
+        Properties {
+            val whose = when {
+                own != null -> "set on this node, for its subtree"
+                governing == viewModel.globalPace -> "the program's"
+                else -> "inherited from a node above"
+            }
+            Property("Setting", settingText(governing) + " — " + whose, tag = "node-pace")
+        }
+    }
+    if (!controllable) return
+    item {
+        Row(Modifier.padding(start = 12.dp, end = 16.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PaceButtons(governing, "node-pace", onToggle = { viewModel.togglePause(node.id) }, onStep = { viewModel.step(node.id) })
+            if (own != null) TextButton("Follow the program", { viewModel.inherit(node.id) }, Modifier.testTag("node-pace-inherit"))
+        }
+    }
+    item {
+        Row(Modifier.padding(start = 12.dp, end = 16.dp, top = 4.dp)) {
+            SpeedSlider(governing, "node-pace-slider", width = 180.dp) { viewModel.setPace(it, node.id) }
+        }
+    }
+    item {
+        Label(THREADS_NOT_COROUTINES, Modifier.padding(start = 12.dp, end = 16.dp, top = 4.dp), Type.small, palette.textDim, maxLines = 3)
     }
 }
 
