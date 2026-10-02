@@ -121,6 +121,15 @@ class PacedCorpusTest {
             "ContextAndDispatchers", "ScopeEdgeCases", "DispatcherThreads", "SuspendMain", "DeferredHeldException", "SupervisorAndHandler",
             // Who does what first is settled by sleeping: "the holder has the lock by now", "the sleeper sleeps by now", 50 ms each.
             "Threads", "VirtualThreads", "MonitorContention",
+            // The same three reasons in the corner-case samples. delay() on Dispatchers.Default / IO / Unconfined, which goes
+            // to the timer thread:
+            "ContextNesting", "UnstructuredJobs",
+            // sleep(100): "everybody is where they are going to wait", then timed waits of 20 ms that have to run out:
+            "ThreadCorners",
+            // delay(150), then the lock is released: a coroutine held for longer than that never has to park for it.
+            "BlockingOnDispatchers",
+            // Tasks of 30 ms on other threads and a get() that has to come before they are done to block at all.
+            "ExecutorsAndPools",
         )
 
         /**

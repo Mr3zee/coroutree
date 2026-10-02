@@ -1,0 +1,96 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ AsyncFailures.kt:22 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at AsyncFailures.kt:25
+    - resumed
+    - suspended at AsyncFailures.kt:45
+    - IllegalArgumentException propagated from coroutineScope
+    - resumed
+    - IllegalArgumentException caught by catch
+    - suspended at AsyncFailures.kt:59
+    - resumed
+    - requested cancellation of launch "waiter"
+    - suspended at AsyncFailures.kt:60
+    - resumed
+    - suspended at AsyncFailures.kt:62
+    - resumed
+    - completed
+    ~ cancels launch "waiter"
+    supervisorScope @ AsyncFailures.kt:25 [completed]
+      - suspended at AsyncFailures.kt:31
+      - IllegalStateException propagated from async "awaited"
+      - IllegalStateException of async "awaited" stopped here (supervisor)
+      - resumed
+      - IllegalStateException caught by catch
+      - IllegalStateException propagated from launch "awaiter"
+      - IllegalStateException of launch "awaiter" stopped here (supervisor)
+      - IllegalStateException propagated from async "never awaited"
+      - IllegalStateException of async "never awaited" stopped here (supervisor)
+      - completed
+      async "awaited" @ AsyncFailures.kt:26 [failed] {+CoroutineName: awaited}
+        - resumed
+        - suspended at AsyncFailures.kt:27
+        - resumed
+        - threw IllegalStateException: awaited
+        - cancelling: IllegalStateException: awaited
+        - IllegalStateException propagated to supervisorScope
+        - IllegalStateException stopped at supervisor supervisorScope
+        - IllegalStateException held in Deferred until awaited
+        - failed
+      async "never awaited" @ AsyncFailures.kt:35 [failed] {+CoroutineName: never awaited}
+        - resumed
+        - suspended at AsyncFailures.kt:36
+        - resumed
+        - threw IllegalStateException: lost
+        - cancelling: IllegalStateException: lost
+        - IllegalStateException propagated to supervisorScope
+        - IllegalStateException stopped at supervisor supervisorScope
+        - IllegalStateException held in Deferred until awaited
+        - failed
+      launch "awaiter" @ AsyncFailures.kt:39 [failed] {+CoroutineName: awaiter, +CoroutineExceptionHandler}
+        - resumed
+        - threw IllegalStateException: awaited
+        - cancelling: IllegalStateException: awaited
+        - IllegalStateException propagated to supervisorScope
+        - IllegalStateException stopped at supervisor supervisorScope
+        - IllegalStateException handled by CoroutineExceptionHandler
+        - failed
+    coroutineScope @ AsyncFailures.kt:45 [failed]
+      - IllegalArgumentException propagated from async "structured"
+      - cancelling: IllegalArgumentException: structured
+      - cancellation propagated to child launch "bystander"
+      - IllegalArgumentException propagated to runBlocking
+      - failed
+      async "structured" @ AsyncFailures.kt:46 [failed] {+CoroutineName: structured}
+        - resumed
+        - suspended at AsyncFailures.kt:47
+        - resumed
+        - threw IllegalArgumentException: structured
+        - cancelling: IllegalArgumentException: structured
+        - IllegalArgumentException propagated to coroutineScope
+        - IllegalArgumentException held in Deferred until awaited
+        - failed
+      launch "bystander" @ AsyncFailures.kt:50 [cancelled] {+CoroutineName: bystander}
+        - resumed
+        - suspended at AsyncFailures.kt:50
+        - cancelled by parent coroutineScope
+        - cancelling: JobCancellationException: Parent job is Cancelling
+        - resumed
+        - cancelled
+    async "slow" @ AsyncFailures.kt:57 [completed] {+CoroutineName: slow}
+      - resumed
+      - suspended at AsyncFailures.kt:57
+      - resumed
+      - completed
+    launch "waiter" @ AsyncFailures.kt:58 [cancelled] {+CoroutineName: waiter}
+      - resumed
+      - suspended at AsyncFailures.kt:58
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - resumed
+      - cancelled
+CompletableDeferredImpl [completed]
+  - completed

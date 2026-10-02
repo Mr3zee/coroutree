@@ -1,0 +1,53 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ StartAndYield.kt:14 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - requested cancellation of launch "default"
+    - requested cancellation of launch "atomic"
+    - suspended at StartAndYield.kt:24
+    - resumed
+    - completed
+    ~ cancels launch "default"
+    ~ cancels launch "atomic"
+    launch "default" @ StartAndYield.kt:15 [cancelled] {+CoroutineName: default}
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - resumed
+      - cancelled
+    launch "atomic" @ StartAndYield.kt:17 [cancelled] {+CoroutineName: atomic}
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - resumed
+      - cancelled
+    launch "lazy joined" @ StartAndYield.kt:24 [completed] {+CoroutineName: lazy joined}
+      - resumed
+      - completed
+    launch "lazy started" @ StartAndYield.kt:25 [completed] {+CoroutineName: lazy started}
+      - resumed
+      - completed
+    launch "undispatched" @ StartAndYield.kt:27 [completed] {+CoroutineName: undispatched}
+      - resumed
+      - suspended at StartAndYield.kt:32
+      - resumed
+      - completed
+      launch "undispatched inside" @ StartAndYield.kt:28 [completed] {CoroutineName: undispatched → undispatched inside}
+        - resumed
+        - suspended at StartAndYield.kt:30
+        - resumed
+        - completed
+    launch "ping" @ StartAndYield.kt:35 [completed] {+CoroutineName: ping}
+      - resumed
+      - suspended at StartAndYield.kt:35
+      - resumed
+      - suspended at StartAndYield.kt:35
+      - resumed
+      - completed
+    launch "pong" @ StartAndYield.kt:36 [completed] {+CoroutineName: pong}
+      - resumed
+      - suspended at StartAndYield.kt:36
+      - resumed
+      - suspended at StartAndYield.kt:36
+      - resumed
+      - completed

@@ -1,0 +1,73 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - blocked (join) in runBlocking
+  - unblocked
+  - unblocked
+  - completed
+  runBlocking @ UnstructuredJobs.kt:26 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at UnstructuredJobs.kt:27
+    - resumed
+    - suspended at UnstructuredJobs.kt:31
+    - resumed
+    - requested cancellation of launch "host"
+    - suspended at UnstructuredJobs.kt:33
+    - resumed
+    - suspended at UnstructuredJobs.kt:35
+    - resumed
+    - suspended at UnstructuredJobs.kt:40
+    - resumed
+    - blocked its thread (join)
+    - unblocked its thread
+    - suspended at UnstructuredJobs.kt:42
+    - resumed
+    - completed
+    ~ launches Job()
+    ~ launches launch "detached"
+    ~ launches launch "adopted"
+    ~ cancels launch "host"
+    ~ launches launch "global"
+    ~ launches launch "component"
+    ~ launches thread "canceller"
+    launch "host" @ UnstructuredJobs.kt:29 [cancelled] {+CoroutineName: host}
+      - resumed
+      - suspended at UnstructuredJobs.kt:29
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - cancellation propagated to child launch "adopted"
+      - resumed
+      - cancelled
+      launch "adopted" @ UnstructuredJobs.kt:30 [cancelled] {CoroutineName: host → adopted}
+        - resumed
+        - suspended at UnstructuredJobs.kt:30
+        - cancelled by parent launch "host"
+        - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+        - resumed
+        - cancelled
+    Job() @ UnstructuredJobs.kt:38 [cancelled]
+      - cancellation requested by thread "canceller"
+      - cancelling: JobCancellationException: Job was cancelled
+      - cancellation propagated to child launch "component"
+      - cancelled
+      launch "component" @ UnstructuredJobs.kt:39 [cancelled] {+CoroutineName: component}
+        - resumed
+        - suspended at UnstructuredJobs.kt:39
+        - cancelled by parent Job()
+        - cancelling: JobCancellationException: Job was cancelled
+        - resumed
+        - cancelled
+  thread "canceller" @ UnstructuredJobs.kt:41 [completed]
+    - requested cancellation of Job()
+    - completed
+    ~ cancels Job()
+Job() @ UnstructuredJobs.kt:27 [active]
+  launch "detached" @ UnstructuredJobs.kt:27 [completed] {+CoroutineName: detached, +Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at UnstructuredJobs.kt:27
+    - resumed
+    - completed
+launch "global" @ UnstructuredJobs.kt:35 [completed] {+CoroutineName: global, +Dispatcher: Dispatchers.Unconfined}
+  - resumed
+  - suspended at UnstructuredJobs.kt:35
+  - resumed
+  - completed

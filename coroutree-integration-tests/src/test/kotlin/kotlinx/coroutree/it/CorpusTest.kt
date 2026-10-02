@@ -79,6 +79,10 @@ class CorpusTest {
             "StructuredConcurrency", "ContextAndDispatchers", "ExceptionPropagation", "SupervisorAndHandler",
             "DeferredHeldException", "Cancellation", "Timeouts", "StartModes", "ScopeEdgeCases", "BlockingInCoroutine",
             "SuspendMain", "InlineFunctions",
+            "AsyncFailures", "CancellationCorners", "ContextNesting", "HandlerPlacement", "UnstructuredJobs", "StartAndYield",
+            "ProduceAndSelect", "BlockingOnDispatchers", "InlineAcrossFiles",
+            // Not HostileObjects: in debug mode the library itself copies exceptions and reads the message of one whose
+            // message throws. What happens then is the program's and the library's affair, and no golden of ours.
         )
     }
 }

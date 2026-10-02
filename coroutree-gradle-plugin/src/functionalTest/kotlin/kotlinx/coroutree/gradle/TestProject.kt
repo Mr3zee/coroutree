@@ -66,6 +66,31 @@ class TestProject(val dir: File) {
         .withPluginClasspath()
         .withArguments(*arguments, "--stacktrace")
 
+    /** Without the plugin injected by TestKit: for builds that bring it themselves, see [pluginClasses]. */
+    fun runnerWithoutPlugin(vararg arguments: String): GradleRunner = GradleRunner.create()
+        .withProjectDir(dir)
+        .withArguments(*arguments, "--stacktrace")
+
+    /**
+     * Class and resource directories of the plugin under test, for a `buildscript { }` class path. A build that takes
+     * the plugin this way loads it once per script, which is how projects without a common declaration get it.
+     */
+    val pluginClasses: List<String> by lazy {
+        val metadata = Properties().apply {
+            val resource = TestProject::class.java.classLoader.getResourceAsStream("plugin-under-test-metadata.properties")
+                ?: error("plugin-under-test-metadata.properties is not on the test class path")
+            resource.use(::load)
+        }
+        metadata.getProperty("implementation-classpath").split(File.pathSeparator).map(::File).filter { it.isDirectory }.map { it.invariantSeparatorsPath }
+    }
+
+    /** `group` and `version` of the artifacts the plugin resolves by default: what its own build stamped into it. */
+    val pluginProperties: Properties by lazy {
+        val file = pluginClasses.map { File(it, "kotlinx/coroutree/gradle/plugin.properties") }.firstOrNull { it.isFile }
+            ?: error("plugin.properties is not among $pluginClasses")
+        Properties().apply { file.inputStream().use(::load) }
+    }
+
     fun agentConfig(path: String): Properties = Properties().apply { File(dir, path).inputStream().use(::load) }
 
     fun exists(path: String): Boolean = File(dir, path).exists()

@@ -1,0 +1,96 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ HandlerPlacement.kt:19 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at HandlerPlacement.kt:23
+    - resumed
+    - suspended at HandlerPlacement.kt:33
+    - resumed
+    - suspended at HandlerPlacement.kt:44
+    - resumed
+    - completed
+    supervisorScope @ HandlerPlacement.kt:23 [completed]
+      - IllegalStateException propagated from launch "outer"
+      - IllegalStateException of launch "outer" stopped here (supervisor)
+      - completed
+      launch "outer" @ HandlerPlacement.kt:24 [failed] {+CoroutineName: outer, +CoroutineExceptionHandler}
+        - resumed
+        - suspended at HandlerPlacement.kt:29
+        - IllegalStateException propagated from launch "inner"
+        - cancelling: IllegalStateException: from the inner one
+        - IllegalStateException propagated to supervisorScope
+        - IllegalStateException stopped at supervisor supervisorScope
+        - resumed
+        - IllegalStateException handled by CoroutineExceptionHandler
+        - failed
+        launch "inner" @ HandlerPlacement.kt:25 [failed] {CoroutineName: outer → inner}
+          - resumed
+          - suspended at HandlerPlacement.kt:26
+          - resumed
+          - threw IllegalStateException: from the inner one
+          - cancelling: IllegalStateException: from the inner one
+          - IllegalStateException propagated to launch "outer"
+          - failed
+    supervisorScope @ HandlerPlacement.kt:33 [completed]
+      - IllegalStateException propagated from async "deferred"
+      - IllegalStateException of async "deferred" stopped here (supervisor)
+      - IllegalStateException propagated from launch "no handler"
+      - IllegalStateException of launch "no handler" stopped here (supervisor)
+      - completed
+      async "deferred" @ HandlerPlacement.kt:34 [failed] {+CoroutineName: deferred, +CoroutineExceptionHandler}
+        - resumed
+        - suspended at HandlerPlacement.kt:35
+        - resumed
+        - threw IllegalStateException: kept in the Deferred
+        - cancelling: IllegalStateException: kept in the Deferred
+        - IllegalStateException propagated to supervisorScope
+        - IllegalStateException stopped at supervisor supervisorScope
+        - IllegalStateException held in Deferred until awaited
+        - failed
+      launch "no handler" @ HandlerPlacement.kt:38 [failed] {+CoroutineName: no handler}
+        - resumed
+        - suspended at HandlerPlacement.kt:39
+        - resumed
+        - threw IllegalStateException: nobody's
+        - cancelling: IllegalStateException: nobody's
+        - IllegalStateException propagated to supervisorScope
+        - IllegalStateException stopped at supervisor supervisorScope
+        - IllegalStateException reached the uncaught exception handler
+        - failed
+    supervisorScope @ HandlerPlacement.kt:44 [completed]
+      - IllegalStateException propagated from launch "through a scope"
+      - IllegalStateException of launch "through a scope" stopped here (supervisor)
+      - completed
+      launch "through a scope" @ HandlerPlacement.kt:45 [failed] {+CoroutineName: through a scope, +CoroutineExceptionHandler}
+        - resumed
+        - suspended at HandlerPlacement.kt:46
+        - IllegalStateException propagated from coroutineScope
+        - resumed
+        - cancelling: IllegalStateException: from deep down
+        - IllegalStateException propagated to supervisorScope
+        - IllegalStateException stopped at supervisor supervisorScope
+        - IllegalStateException handled by CoroutineExceptionHandler
+        - failed
+        coroutineScope @ HandlerPlacement.kt:46 [failed]
+          - IllegalStateException propagated from launch "deep"
+          - cancelling: IllegalStateException: from deep down
+          - cancellation propagated to child launch "deep sibling"
+          - IllegalStateException propagated to launch "through a scope"
+          - failed
+          launch "deep" @ HandlerPlacement.kt:47 [failed] {CoroutineName: through a scope → deep}
+            - resumed
+            - suspended at HandlerPlacement.kt:48
+            - resumed
+            - threw IllegalStateException: from deep down
+            - cancelling: IllegalStateException: from deep down
+            - IllegalStateException propagated to coroutineScope
+            - failed
+          launch "deep sibling" @ HandlerPlacement.kt:51 [cancelled] {CoroutineName: through a scope → deep sibling}
+            - resumed
+            - suspended at HandlerPlacement.kt:51
+            - cancelled by parent coroutineScope
+            - cancelling: JobCancellationException: Parent job is Cancelling
+            - resumed
+            - cancelled

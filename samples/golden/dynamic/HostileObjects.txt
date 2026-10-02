@@ -1,0 +1,42 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ HostileObjects.kt:16 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at HostileObjects.kt:23
+    - Cursed propagated from coroutineScope
+    - resumed
+    - Cursed caught by catch
+    - completed
+    launch @ HostileObjects.kt:17 [completed] {+Hostile: Hostile (toString threw java.lang.IllegalStateException)}
+      - resumed
+      - suspended at HostileObjects.kt:17
+      - resumed
+      - completed
+    launch @ HostileObjects.kt:18 [completed] {+Hostile: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…}
+      - resumed
+      - suspended at HostileObjects.kt:18
+      - resumed
+      - completed
+    launch @ HostileObjects.kt:19 [completed] {+Hostile: Hostile (toString threw java.lang.NullPointerException)}
+      - resumed
+      - suspended at HostileObjects.kt:19
+      - resumed
+      - completed
+    launch @ HostileObjects.kt:20 [completed] {+HashBomb: HashBomb (toString threw java.lang.IllegalStateException)}
+      - resumed
+      - suspended at HostileObjects.kt:20
+      - resumed
+      - completed
+    coroutineScope @ HostileObjects.kt:23 [failed]
+      - Cursed propagated from launch "cursed"
+      - cancelling: Cursed
+      - Cursed propagated to runBlocking
+      - failed
+      launch "cursed" @ HostileObjects.kt:24 [failed] {+CoroutineName: cursed}
+        - resumed
+        - threw Cursed
+        - cancelling: Cursed
+        - Cursed propagated to coroutineScope
+        - failed

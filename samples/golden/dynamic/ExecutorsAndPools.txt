@@ -1,0 +1,10 @@
+Thread "main" [completed]
+  - blocked (park)
+  - unblocked
+  - blocked (park)
+  - unblocked
+  - blocked (park)
+  - unblocked
+  - blocked (park)
+  - unblocked
+  - completed

@@ -1,0 +1,67 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking "root" @ ContextNesting.kt:20 [completed] {+CoroutineName: root, +Tenant: Tenant(acme), +Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at ContextNesting.kt:21
+    - resumed
+    - suspended at ContextNesting.kt:27
+    - resumed
+    - suspended at ContextNesting.kt:34
+    - resumed
+    - suspended at ContextNesting.kt:36
+    - resumed
+    - suspended at ContextNesting.kt:40
+    - resumed
+    - completed
+    withContext @ ContextNesting.kt:21 [completed] {Dispatcher: BlockingEventLoop → Dispatchers.Default}
+      - resumed
+      - suspended at ContextNesting.kt:22
+      - resumed
+      - suspended at ContextNesting.kt:23
+      - resumed
+      - suspended at ContextNesting.kt:24
+      - resumed
+      - completed
+      withContext @ ContextNesting.kt:22 [completed]
+        - suspended at ContextNesting.kt:22
+        - resumed
+        - completed
+      withContext @ ContextNesting.kt:23 [completed] {Dispatcher: Dispatchers.Default → Dispatchers.IO}
+        - resumed
+        - suspended at ContextNesting.kt:23
+        - resumed
+        - completed
+      withContext "renamed inside" @ ContextNesting.kt:24 [completed] {CoroutineName: root → renamed inside}
+        - suspended at ContextNesting.kt:24
+        - resumed
+        - completed
+    withContext @ ContextNesting.kt:27 [completed] {Dispatcher: BlockingEventLoop → Dispatchers.Default.limitedParallelism(1)}
+      - resumed
+      - completed
+      launch "limited" @ ContextNesting.kt:28 [completed] {CoroutineName: root → limited}
+        - resumed
+        - suspended at ContextNesting.kt:28
+        - resumed
+        - completed
+    launch "unconfined" @ ContextNesting.kt:31 [completed] {CoroutineName: root → unconfined, Dispatcher: BlockingEventLoop → Dispatchers.Unconfined}
+      - resumed
+      - suspended at ContextNesting.kt:33
+      - resumed
+      - completed
+      launch @ ContextNesting.kt:32 [completed]
+        - resumed
+        - suspended at ContextNesting.kt:32
+        - resumed
+        - completed
+    launch @ ContextNesting.kt:36 [completed] {Tenant: Tenant(acme) → Tenant(globex)}
+      - resumed
+      - suspended at ContextNesting.kt:36
+      - resumed
+      - completed
+    launch @ ContextNesting.kt:39 [completed] {-CoroutineName: root, -Tenant: Tenant(acme)}
+      - resumed
+      - suspended at ContextNesting.kt:39
+      - resumed
+      - completed

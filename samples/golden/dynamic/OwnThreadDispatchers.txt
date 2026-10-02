@@ -1,0 +1,21 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ OwnThreadDispatchers.kt:19 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at OwnThreadDispatchers.kt:21
+    - resumed
+    - suspended at OwnThreadDispatchers.kt:24
+    - resumed
+    - completed
+    withContext "on its own thread" @ OwnThreadDispatchers.kt:21 [completed] {+CoroutineName: on its own thread, Dispatcher: BlockingEventLoop → java.util.concurrent.Executors$DelegatedExecutorService}
+      - resumed
+      - suspended at OwnThreadDispatchers.kt:21
+      - resumed
+      - completed
+    withContext "on an executor" @ OwnThreadDispatchers.kt:24 [completed] {+CoroutineName: on an executor, Dispatcher: BlockingEventLoop → java.util.concurrent.Executors$AutoShutdownDelegatedExecutorService}
+      - resumed
+      - suspended at OwnThreadDispatchers.kt:24
+      - resumed
+      - completed

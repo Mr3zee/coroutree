@@ -53,6 +53,18 @@ class GoldenTreeTest {
             "MixedJavaKotlin",
             "SuspendMain",
             "InlineFunctions",
+            "AsyncFailures",
+            "CancellationCorners",
+            "ContextNesting",
+            "HandlerPlacement",
+            "UnstructuredJobs",
+            "StartAndYield",
+            "ProduceAndSelect",
+            "ThreadCorners",
+            "BlockingOnDispatchers",
+            "ExecutorsAndPools",
+            "InlineAcrossFiles",
+            "HostileObjects",
         )
 
         fun check(sample: String, run: AgentRun, mayUpdate: Boolean) {

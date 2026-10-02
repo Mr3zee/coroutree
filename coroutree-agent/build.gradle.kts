@@ -43,6 +43,13 @@ dependencies {
     shade(libs.asm.tree)
 
     testImplementation(runtime.output)
+    // Tests only, none of it reaches the agent jar: ASM unshaded to drive the transformers; the model, to read with the
+    // other implementation of the trace format what this one wrote; kotlinx.coroutines, the classes the hook table names.
+    testImplementation(libs.asm)
+    testImplementation(libs.asm.tree)
+    testImplementation("org.ow2.asm:asm-analysis:${libs.versions.asm.get()}")
+    testImplementation(project(":coroutree-model"))
+    testImplementation(libs.coroutines.core)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
@@ -50,6 +57,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // The agent's self-checks, as in every JVM the integration tests fork.
+    systemProperty("coroutree.debug", "true")
 }
 
 val generateBuildInfo by tasks.registering {

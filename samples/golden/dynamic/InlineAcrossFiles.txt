@@ -1,0 +1,51 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - blocked (join) in runBlocking
+  - unblocked
+  - unblocked
+  - completed
+  runBlocking @ InlineAcrossFiles.kt:14 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at InlineAcrossFiles.kt:17
+    - resumed
+    - suspended at InlineAcrossFiles.kt:25
+    - resumed
+    - IllegalStateException caught by catch
+    - blocked its thread (join)
+    - unblocked its thread
+    - suspended at InlineAcrossFiles.kt:35
+    - resumed
+    - completed
+    ~ launches thread "from a lambda"
+    launch "lambda-1" @ InlineAcrossFiles.kt:15 [completed] {+CoroutineName: lambda-1}
+      - resumed
+      - suspended at InlineAcrossFiles.kt:15
+      - resumed
+      - completed
+    launch "lambda-2" @ InlineAcrossFiles.kt:15 [completed] {+CoroutineName: lambda-2}
+      - resumed
+      - suspended at InlineAcrossFiles.kt:15
+      - resumed
+      - completed
+    launch "elsewhere" @ InlineHelpers.kt:13 [completed] {+CoroutineName: elsewhere}
+      - resumed
+      - suspended at InlineHelpers.kt:23
+      - resumed
+      - completed
+    launch "deep" @ InlineAcrossFiles.kt:21 [completed] {+CoroutineName: deep}
+      - resumed
+      - suspended at InlineHelpers.kt:23
+      - resumed
+      - completed
+    launch "a member" @ InlineHelpers.kt:13 [completed] {+CoroutineName: a member}
+      - resumed
+      - suspended at InlineAcrossFiles.kt:25
+      - resumed
+      - completed
+    launch "from java" @ InlineHelpers.kt:13 [completed] {+CoroutineName: from java}
+      - resumed
+      - completed
+  thread "from a lambda" @ InlineAcrossFiles.kt:33 [completed]
+    - blocked (sleep)
+    - unblocked
+    - completed

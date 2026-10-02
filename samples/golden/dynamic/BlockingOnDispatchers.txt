@@ -1,0 +1,33 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ BlockingOnDispatchers.kt:16 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at BlockingOnDispatchers.kt:31
+    - resumed
+    - completed
+    launch "wants the lock" @ BlockingOnDispatchers.kt:19 [completed] {+CoroutineName: wants the lock, Dispatcher: BlockingEventLoop → Dispatchers.IO}
+      - resumed
+      - blocked its thread (park)
+      - unblocked its thread
+      - completed
+    launch "bridge" @ BlockingOnDispatchers.kt:23 [completed] {+CoroutineName: bridge, Dispatcher: BlockingEventLoop → Dispatchers.Default}
+      - resumed
+      - blocked its thread (runBlocking)
+      - unblocked its thread
+      - completed
+      runBlocking "inner loop" @ BlockingOnDispatchers.kt:24 [completed] {+CoroutineName: inner loop, +Dispatcher: BlockingEventLoop}
+        - resumed
+        - completed
+        launch "inner child" @ BlockingOnDispatchers.kt:25 [completed] {CoroutineName: inner loop → inner child}
+          - resumed
+          - suspended at BlockingOnDispatchers.kt:25
+          - resumed
+          - completed
+    launch "joins a thread" @ BlockingOnDispatchers.kt:28 [completed] {+CoroutineName: joins a thread, Dispatcher: BlockingEventLoop → Dispatchers.IO}
+      - resumed
+      - blocked its thread (join)
+      - unblocked its thread
+      - completed
+      ~ launches thread "short"

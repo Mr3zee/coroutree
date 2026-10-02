@@ -1,0 +1,92 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ CancellationCorners.kt:22 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at CancellationCorners.kt:27
+    - resumed
+    - requested cancellation of launch "in delay"
+    - requested cancellation of launch "in join"
+    - requested cancellation of launch "in await"
+    - suspended at CancellationCorners.kt:31
+    - resumed
+    - requested cancellation of async "forever"
+    - requested cancellation of async "forever"
+    - suspended at CancellationCorners.kt:36
+    - resumed
+    - suspended at CancellationCorners.kt:43
+    - resumed
+    - suspended at CancellationCorners.kt:48
+    - resumed
+    - completed
+    ~ cancels launch "in delay"
+    ~ cancels launch "in join"
+    ~ cancels launch "in await"
+    ~ cancels async "forever"
+    ~ cancels async "forever"
+    async "forever" @ CancellationCorners.kt:23 [cancelled] {+CoroutineName: forever}
+      - resumed
+      - suspended at CancellationCorners.kt:23
+      - cancellation requested by runBlocking
+      - cancelling: CancellationException: no longer needed
+      - cancellation requested by runBlocking
+      - resumed
+      - cancelled
+    launch "in delay" @ CancellationCorners.kt:24 [cancelled] {+CoroutineName: in delay}
+      - resumed
+      - suspended at CancellationCorners.kt:24
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - resumed
+      - cancelled
+    launch "in join" @ CancellationCorners.kt:25 [cancelled] {+CoroutineName: in join}
+      - resumed
+      - suspended at CancellationCorners.kt:25
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - resumed
+      - cancelled
+    launch "in await" @ CancellationCorners.kt:26 [cancelled] {+CoroutineName: in await}
+      - resumed
+      - suspended at CancellationCorners.kt:26
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - resumed
+      - cancelled
+    launch "cancels itself" @ CancellationCorners.kt:38 [cancelled] {+CoroutineName: cancels itself}
+      - resumed
+      - requested cancellation of launch "cancels itself"
+      - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+      - cancelled
+    launch "gives up" @ CancellationCorners.kt:45 [cancelled] {+CoroutineName: gives up}
+      - resumed
+      - suspended at CancellationCorners.kt:46
+      - resumed
+      - cancelling: CancellationException: gave up
+      - cancelled
+    launch "parent" @ CancellationCorners.kt:50 [completed] {+CoroutineName: parent}
+      - resumed
+      - suspended at CancellationCorners.kt:53
+      - resumed
+      - requested cancellation of launch "first"
+      - requested cancellation of launch "second"
+      - suspended at CancellationCorners.kt:55
+      - resumed
+      - completed
+      ~ cancels launch "first"
+      ~ cancels launch "second"
+      launch "first" @ CancellationCorners.kt:51 [cancelled] {CoroutineName: parent → first}
+        - resumed
+        - suspended at CancellationCorners.kt:51
+        - cancellation requested by launch "parent"
+        - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+        - resumed
+        - cancelled
+      launch "second" @ CancellationCorners.kt:52 [cancelled] {CoroutineName: parent → second}
+        - resumed
+        - suspended at CancellationCorners.kt:52
+        - cancellation requested by launch "parent"
+        - cancelling: JobCancellationException: StandaloneCoroutine was cancelled
+        - resumed
+        - cancelled

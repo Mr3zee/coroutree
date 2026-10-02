@@ -1,0 +1,98 @@
+Thread "main" [completed]
+  - blocked (sleep)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (sleep)
+  - unblocked
+  - interrupted thread "interrupted in wait"
+  - interrupted thread "interrupted in park"
+  - interrupted thread "interrupted in await"
+  - interrupted thread "interrupted in join"
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - blocked (sleep)
+  - unblocked
+  - blocked (join)
+  - unblocked
+  - completed
+  ~ interrupts thread "interrupted in wait"
+  ~ interrupts thread "interrupted in park"
+  ~ interrupts thread "interrupted in await"
+  ~ interrupts thread "interrupted in join"
+  thread "locker" @ ThreadCorners.kt:21 [completed]
+    - blocked (park)
+    - unblocked
+    - completed
+  thread "latched" @ ThreadCorners.kt:22 [completed]
+    - blocked (park)
+    - unblocked
+    - completed
+  thread "timed waiter" @ ThreadCorners.kt:23 [completed]
+    - blocked (wait)
+    - unblocked
+    - completed
+  thread "timed parker" @ ThreadCorners.kt:24 [completed]
+    - blocked (park)
+    - unblocked
+    - completed
+  thread "permitted" @ ThreadCorners.kt:25 [completed]
+    - blocked (park)
+    - unblocked
+    - completed
+  thread "daemon" @ ThreadCorners.kt:29 [blocked]
+    - blocked (sleep)
+  thread "interrupted in wait" @ ThreadCorners.kt:36 [completed]
+    - blocked (wait)
+    - interrupted by Thread "main"
+    - unblocked
+    - InterruptedException caught by catch
+    - completed
+  thread "interrupted in park" @ ThreadCorners.kt:43 [completed]
+    - blocked (park)
+    - interrupted by Thread "main"
+    - unblocked
+    - completed
+  thread "interrupted in await" @ ThreadCorners.kt:47 [completed]
+    - blocked (park)
+    - interrupted by Thread "main"
+    - unblocked
+    - InterruptedException caught by catch
+    - completed
+  thread "interrupted in join" @ ThreadCorners.kt:57 [completed]
+    - blocked (join)
+    - interrupted by Thread "main"
+    - unblocked
+    - InterruptedException caught by catch
+    - completed
+  thread "interrupts itself" @ ThreadCorners.kt:64 [completed]
+    - interrupted thread "interrupts itself"
+    - completed
+  Thread.ofVirtual().start "virtual parker" @ ThreadCorners.kt:72 [completed]
+    - blocked (park)
+    - unblocked
+    - blocked (join)
+    - unblocked
+    - completed
+    thread "started by a virtual thread" @ ThreadCorners.kt:73 [completed]
+      - blocked (sleep)
+      - unblocked
+      - completed

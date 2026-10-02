@@ -1,0 +1,43 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - completed
+  runBlocking @ ProduceAndSelect.kt:17 [completed] {+Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at ProduceAndSelect.kt:19
+    - resumed
+    - suspended at ProduceAndSelect.kt:19
+    - resumed
+    - suspended at ProduceAndSelect.kt:25
+    - resumed
+    - requested cancellation of produce "endless"
+    - suspended at ProduceAndSelect.kt:30
+    - resumed
+    - requested cancellation of async "slow"
+    - completed
+    ~ cancels produce "endless"
+    ~ cancels async "slow"
+    produce "numbers" @ ProduceAndSelect.kt:18 [completed] {+CoroutineName: numbers}
+      - resumed
+      - suspended at ProduceAndSelect.kt:18
+      - resumed
+      - completed
+    produce "endless" @ ProduceAndSelect.kt:21 [cancelled] {+CoroutineName: endless}
+      - resumed
+      - suspended at ProduceAndSelect.kt:23
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: ProducerCoroutine was cancelled
+      - resumed
+      - cancelled
+    async "fast" @ ProduceAndSelect.kt:28 [completed] {+CoroutineName: fast}
+      - resumed
+      - suspended at ProduceAndSelect.kt:28
+      - resumed
+      - completed
+    async "slow" @ ProduceAndSelect.kt:29 [cancelled] {+CoroutineName: slow}
+      - resumed
+      - suspended at ProduceAndSelect.kt:29
+      - cancellation requested by runBlocking
+      - cancelling: JobCancellationException: DeferredCoroutine was cancelled
+      - resumed
+      - cancelled
