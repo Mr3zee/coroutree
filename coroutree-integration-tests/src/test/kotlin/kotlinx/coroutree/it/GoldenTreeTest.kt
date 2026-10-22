@@ -65,6 +65,7 @@ class GoldenTreeTest {
             "ExecutorsAndPools",
             "InlineAcrossFiles",
             "HostileObjects",
+            "SharedDriver",
         )
 
         fun check(sample: String, run: AgentRun, mayUpdate: Boolean) {

@@ -260,6 +260,8 @@ final class KotlinAccess {
         for (int steps = 0; stackFrame.isInstance(frame) && frames.size() < limit && steps < 10_000; steps++) {
             StackTraceElement element = (StackTraceElement) stackTraceElement.invoke(frame);
             if (element != null) StackFrameRef.add(frames, element);
+            // Reading the caller can be a step of a stateful frame (Ktor's pipeline bridge), so not one more than the cut needs.
+            if (frames.size() >= limit) break;
             frame = callerFrame.invoke(frame);
         }
         return StackCapture.limit(frames.toArray(new StackFrameRef[0]), limit);

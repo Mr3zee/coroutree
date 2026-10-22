@@ -130,6 +130,9 @@ class PacedCorpusTest {
             "BlockingOnDispatchers",
             // Tasks of 30 ms on other threads and a get() that has to come before they are done to block at all.
             "ExecutorsAndPools",
+            // A resumer thread that sleeps 50 ms ("the interceptor has suspended by then"), and delay(10)s that the timer thread
+            // starts from inside the first one.
+            "SharedDriver",
         )
 
         /**

@@ -199,6 +199,50 @@ class KotlinAccessTest {
         }
     }
 
+    /**
+     * What Ktor's pipeline bridge does (SuspendFunctionGun): the getter hands out the next saved caller and moves on,
+     * so reading it is a step, not a lookup. Ktor documents concurrent inspection of it as best effort.
+     */
+    private static final class Cursor implements CoroutineStackFrame {
+        final CoroutineStackFrame[] saved;
+        int next;
+
+        Cursor(CoroutineStackFrame... saved) {
+            this.saved = saved;
+        }
+
+        @Override
+        public CoroutineStackFrame getCallerFrame() {
+            return next < saved.length ? saved[next++] : null;
+        }
+
+        @Override
+        public StackTraceElement getStackTraceElement() {
+            return new StackTraceElement("io.ktor.util.pipeline.SuspendFunctionGun", "loop", "SuspendFunctionGun.kt", 1);
+        }
+    }
+
+    @Test
+    void aWalkCutAtTheStatefulBridgeDoesNotAdvanceItsCursor() throws Throwable {
+        Cursor bridge = new Cursor(new HandWritten("a", 1, null), new HandWritten("b", 2, null));
+
+        assertEquals(List.of("loop:1"), methods(access.coroutineStack(bridge, 1)));
+        assertEquals(0, bridge.next, "the limit was reached on the bridge itself: nobody asked for its caller");
+    }
+
+    @Test
+    void repeatedWalksOfAStatefulBridgeEachTakeOneStepPerReportedFrame() throws Throwable {
+        Cursor bridge = new Cursor(new HandWritten("a", 1, null), new HandWritten("b", 2, null));
+
+        // The bridge is read once to get to "a", which ends the chain. Limit 2 is met by "a" without a further read.
+        assertEquals(List.of("loop:1", "a:1"), methods(access.coroutineStack(bridge, 2)));
+        assertEquals(1, bridge.next);
+        // The next walk sees what the bridge's cursor gives it now: that is the bridge's contract.
+        assertEquals(List.of("loop:1", "b:2"), methods(access.coroutineStack(bridge, 16)));
+        assertEquals(2, bridge.next);
+        assertEquals(List.of("loop:1"), methods(access.coroutineStack(bridge, 16)), "an exhausted cursor ends the chain");
+    }
+
     private static List<String> methods(StackFrameRef[] stack) {
         List<String> result = new ArrayList<>();
         for (StackFrameRef frame : stack) result.add(frame.methodName + ":" + frame.line);

@@ -557,6 +557,16 @@ above say how, the first two items here what remains of them.
 - **Jobless coroutines, what is left.** A coroutine that is started by hand with `startCoroutineUninterceptedOrReturn` and a
   completion of its own is not created by `createCoroutineUnintercepted` and stays unseen (the function is inline, there is no
   one place to hook). Generators are hidden on purpose (see the table above).
+- **Shared drivers (Ktor's `SuspendFunctionGun`), as covered.** A chain of interceptors that are all handed one continuation,
+  with the callers saved on a stack and resumed from the top, is traced as the coroutine it runs for: the driver is no node, and
+  an interceptor's suspensions and resumptions are those of the coroutine whose context the driver reports (`SharedDriver` sample,
+  `SharedDriverTest`). In a coroutine without a Job the interceptors reach it only if the driver is a `CoroutineStackFrame`, and
+  only if its `callerFrame` leads *out* of the chain. Ktor's own steps down the saved stack one caller per question; every saved
+  caller has the driver as its completion, so the walk the agent makes (`joblessNode`, which stops at the first match) leaves it
+  half done and the next question gets `null`: with such a driver the sample's jobless coroutine lost suspensions that happen
+  inside the chain. A driver that answers with the top of the stack leads the walk round in a circle (it ends at the step limit)
+  and those suspensions are not the coroutine's either; only the one where `proceed()` itself suspends is. The sample's driver
+  names the outermost caller instead, which the agent follows.
 - **Inlined code, what is left.** The inline functions between the innermost and the outermost are known for project classes
   only: they take reading the code, and other classes are only looked at for their source map. They are also a reading of
   compiler conventions (marker variables, which line is in force where a marker's span begins), not of a specification; a

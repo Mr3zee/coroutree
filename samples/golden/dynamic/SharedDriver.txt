@@ -1,0 +1,84 @@
+Thread "main" [completed]
+  - blocked (runBlocking)
+  - unblocked
+  - blocked (park)
+  - unblocked
+  - completed
+  ~ launches startCoroutine "jobless pipeline"
+  runBlocking "pipelines" @ SharedDriver.kt:32 [completed] {+CoroutineName: pipelines, +Dispatcher: BlockingEventLoop}
+    - resumed
+    - suspended at SharedDriver.kt:35
+    - resumed
+    - suspended at SharedDriver.kt:39
+    - resumed
+    - suspended at SharedDriver.kt:50
+    - resumed
+    - suspended at SharedDriver.kt:55
+    - resumed
+    - suspended at SharedDriver.kt:59
+    - resumed
+    - suspended at SharedDriver.kt:71
+    - resumed
+    - suspended at SharedDriver.kt:81
+    - resumed
+    - completed
+    launch "nested" @ SharedDriver.kt:33 [completed] {CoroutineName: pipelines → nested}
+      - resumed
+      - completed
+    launch "return" @ SharedDriver.kt:37 [completed] {CoroutineName: pipelines → return}
+      - resumed
+      - suspended at SharedDriver.kt:107
+      - resumed
+      - suspended at SharedDriver.kt:107
+      - resumed
+      - completed
+    launch "context" @ SharedDriver.kt:41 [completed] {CoroutineName: pipelines → context}
+      - resumed
+      - suspended at SharedDriver.kt:43
+      - resumed
+      - completed
+      withContext "wrapped" @ SharedDriver.kt:43 [completed] {CoroutineName: context → wrapped}
+        - suspended at SharedDriver.kt:107
+        - resumed
+        - completed
+    launch "pool" @ SharedDriver.kt:52 [completed] {CoroutineName: pipelines → pool}
+      - resumed
+      - suspended at SharedDriver.kt:53
+      - resumed
+      - completed
+      withContext @ SharedDriver.kt:53 [completed] {Dispatcher: BlockingEventLoop → Dispatchers.Default}
+        - resumed
+        - suspended at SharedDriver.kt:107
+        - resumed
+        - completed
+    launch "thread" @ SharedDriver.kt:57 [completed] {CoroutineName: pipelines → thread}
+      - resumed
+      - suspended at SharedDriver.kt:114
+      - resumed
+      - completed
+      ~ launches thread "resumer"
+    launch "caught" @ SharedDriver.kt:61 [completed] {CoroutineName: pipelines → caught}
+      - resumed
+      - IllegalStateException caught by catch
+      - suspended at SharedDriver.kt:100
+      - resumed
+      - IllegalStateException caught by catch
+      - completed
+    launch "late failure" @ SharedDriver.kt:73 [completed] {CoroutineName: pipelines → late failure}
+      - resumed
+      - suspended at SharedDriver.kt:75
+      - resumed
+      - IllegalArgumentException caught by catch
+      - completed
+  thread "resumer" @ SharedDriver.kt:115 [completed]
+    - blocked (sleep)
+    - unblocked
+    - completed
+startCoroutine "jobless pipeline" @ SharedDriver.kt:90 [completed] {+CoroutineName: jobless pipeline}
+  - resumed
+  - suspended at SharedDriver.kt:107
+  - resumed
+  - suspended at SharedDriver.kt:114
+  - resumed
+  - completed
+  ~ launches thread "jobless resumer"
