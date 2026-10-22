@@ -112,8 +112,11 @@ val uberJars = desktopTargets.map { target ->
         archiveClassifier = target
         from(sourceSets.main.map { it.output })
         configurations = listOf(runtime.get())
+        // Shadow 9 warns that EXCLUDE can drop entries before its transformers (services, kotlin_module) merge them.
+        duplicatesStrategy = DuplicatesStrategy.INCLUDE
         mergeServiceFiles()
         exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/versions/*/module-info.class", "module-info.class")
+        exclude("META-INF/androidx/**/LICENSE.txt") // shipped twice by navigationevent-compose
         manifest {
             attributes("Main-Class" to mainClassName, "Implementation-Version" to project.version)
         }
