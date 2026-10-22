@@ -58,9 +58,13 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
+// The macOS trackpad pinch comes through com.apple.eawt.event, which java.desktop does not export (MacTrackpad).
+val eawtExport = "--add-exports=java.desktop/com.apple.eawt.event=ALL-UNNAMED"
+
 compose.desktop {
     application {
         mainClass = mainClassName
+        jvmArgs += eawtExport
     }
 }
 
@@ -71,6 +75,7 @@ tasks.withType<org.jetbrains.compose.reload.gradle.AbstractComposeHotRun>().conf
         languageVersion = JavaLanguageVersion.of(21)
         vendor = JvmVendorSpec.JETBRAINS
     }
+    jvmArgs(eawtExport)
 }
 
 tasks.test {
@@ -118,7 +123,8 @@ val uberJars = desktopTargets.map { target ->
         exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/versions/*/module-info.class", "module-info.class")
         exclude("META-INF/androidx/**/LICENSE.txt") // shipped twice by navigationevent-compose
         manifest {
-            attributes("Main-Class" to mainClassName, "Implementation-Version" to project.version)
+            // Add-Exports is the manifest's form of --add-exports for java -jar: every launcher runs the jar that way.
+            attributes("Main-Class" to mainClassName, "Implementation-Version" to project.version, "Add-Exports" to "java.desktop/com.apple.eawt.event")
         }
     }
 }
