@@ -1,5 +1,5 @@
 plugins {
-    alias(libs.plugins.kotlin.jvm)
+    id("coroutree.kotlin-jvm")
 }
 
 /*
@@ -11,14 +11,12 @@ plugins {
  * main source set, so that there is one corpus and the tests need nothing published.
  */
 
-kotlin {
-    jvmToolchain(26)
-}
+val samples = layout.settingsDirectory.dir("samples")
 
 sourceSets {
     main {
-        kotlin.srcDir(rootProject.layout.projectDirectory.dir("samples/src/main/kotlin"))
-        java.srcDir(rootProject.layout.projectDirectory.dir("samples/src/main/java"))
+        kotlin.srcDir(samples.dir("src/main/kotlin"))
+        java.srcDir(samples.dir("src/main/java"))
     }
 }
 
@@ -35,8 +33,8 @@ val agentJar = configurations.create("agentJar") {
 val otherCoroutinesVersions = listOf("1.10.2", "1.9.0")
 val samplesWithOtherCoroutines: Map<String, SourceSet> = otherCoroutinesVersions.associateWith { version ->
     sourceSets.create("samplesWithCoroutines" + version.replace(".", "")) {
-        kotlin.srcDir(rootProject.layout.projectDirectory.dir("samples/src/main/kotlin"))
-        java.srcDir(rootProject.layout.projectDirectory.dir("samples/src/main/java"))
+        kotlin.srcDir(samples.dir("src/main/kotlin"))
+        java.srcDir(samples.dir("src/main/java"))
     }
 }
 
@@ -49,20 +47,15 @@ dependencies {
 
     testImplementation(project(":coroutree-model"))
     testImplementation(project(":coroutree-gui")) // its trace sources, not its UI: GuiFollowsLiveJvmTest
-    testImplementation(kotlin("test"))
-    testImplementation(platform(libs.junit.bom))
-    testImplementation(libs.junit.jupiter)
-    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks.test {
-    useJUnitPlatform()
     val java = javaToolchains.launcherFor(java.toolchain).map { it.executablePath.asFile.absolutePath }
     val agent: FileCollection = agentJar
     val samplesClasspath: FileCollection = sourceSets.main.get().runtimeClasspath
     val otherClasspaths: Map<String, FileCollection> = samplesWithOtherCoroutines.mapValues { it.value.runtimeClasspath }
     val fakeCoroutinesClasses: FileCollection = fakeCoroutines.output
-    val goldenDir = rootProject.layout.projectDirectory.dir("samples/golden/dynamic").asFile
+    val goldenDir = samples.dir("golden/dynamic").asFile
     val workDir = layout.buildDirectory.dir("agent-runs").map { it.asFile.absolutePath }
     val updateGoldens = providers.gradleProperty("updateGoldens").isPresent
 

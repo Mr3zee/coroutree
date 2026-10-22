@@ -1,17 +1,14 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
-    alias(libs.plugins.kotlin.jvm)
+    id("coroutree.kotlin-jvm")
     `java-gradle-plugin`
-    `maven-publish`
+    id("coroutree.publishing")
 }
 
 kotlin {
-    jvmToolchain(26)
     explicitApi()
     compilerOptions {
-        jvmTarget = JvmTarget.JVM_17
         // The plugin runs on the Kotlin stdlib embedded into Gradle, whatever this build compiles with.
         // 2.2 is what Gradle 9.0, the oldest supported version, ships.
         apiVersion = KotlinVersion.KOTLIN_2_2
@@ -19,10 +16,6 @@ kotlin {
         // Gradle can neither track the implementation of invokedynamic lambdas nor store them in the configuration cache.
         freeCompilerArgs.addAll("-Xlambdas=class", "-Xsam-conversions=class")
     }
-}
-
-tasks.withType<JavaCompile>().configureEach {
-    options.release = 17
 }
 
 gradlePlugin {
@@ -76,9 +69,6 @@ dependencies {
     compileOnly(libs.kotlin.gradle.plugin.api)
 
     testImplementation(gradleApi())
-    testImplementation(kotlin("test"))
-    testImplementation(platform(libs.junit.bom))
-    testRuntimeOnly(libs.junit.platform.launcher)
 
     "functionalTestImplementation"(gradleTestKit())
     "functionalTestImplementation"(kotlin("test-junit5")) // kotlin("test") picks the framework only for the standard test task
@@ -86,11 +76,7 @@ dependencies {
     "functionalTestImplementation"(libs.junit.jupiter)
     "functionalTestRuntimeOnly"(libs.junit.platform.launcher)
 
-    functionalTestPluginClasspath("org.jetbrains.kotlin:kotlin-gradle-plugin:${libs.versions.kotlin.get()}")
-}
-
-tasks.test {
-    useJUnitPlatform()
+    functionalTestPluginClasspath(libs.kotlin.gradle.plugin)
 }
 
 val functionalTestTask = tasks.register<Test>("functionalTest") {
@@ -98,7 +84,6 @@ val functionalTestTask = tasks.register<Test>("functionalTest") {
     group = LifecycleBasePlugin.VERIFICATION_GROUP
     testClassesDirs = functionalTest.output.classesDirs
     classpath = functionalTest.runtimeClasspath
-    useJUnitPlatform()
     shouldRunAfter(tasks.test)
 
     val fakeAgentFile = fakeAgentJar.flatMap { it.archiveFile }

@@ -1,14 +1,15 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 
 plugins {
-    alias(libs.plugins.kotlin.jvm)
+    id("coroutree.kotlin-jvm")
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose)
     // Development only: `hotRun --auto` runs the GUI on the JetBrains Runtime and swaps the code in as it is edited.
     alias(libs.plugins.hot.reload)
-    `maven-publish`
+    // The ShadowJar task type only: the uber jars are tasks of this script, not the plugin's.
+    alias(libs.plugins.shadow) apply false
+    id("coroutree.publishing")
 }
 
 val mainClassName = "kotlinx.coroutree.gui.MainKt"
@@ -27,17 +28,6 @@ val hostTarget: String = run {
     "$osPart-${if (arch == "aarch64" || arch == "arm64") "arm64" else "x64"}"
 }
 
-kotlin {
-    jvmToolchain(26)
-    compilerOptions {
-        jvmTarget = JvmTarget.JVM_17
-    }
-}
-
-tasks.withType<JavaCompile>().configureEach {
-    options.release = 17
-}
-
 // The host's native Compose runtime lives in its own bucket: `run`, tests and the plain `runtimeElements` variant
 // (which a composite build launches the GUI from) need it, the per-OS uber jars must not inherit it.
 val hostRuntime = configurations.dependencyScope("hostRuntime")
@@ -52,10 +42,7 @@ dependencies {
     implementation(libs.coroutines.swing)
     hostRuntime(desktopRuntime(hostTarget))
 
-    testImplementation(kotlin("test"))
     testImplementation(libs.compose.ui.test)
-    testImplementation(platform(libs.junit.bom))
-    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 // The macOS trackpad pinch comes through com.apple.eawt.event, which java.desktop does not export (MacTrackpad).
@@ -79,7 +66,6 @@ tasks.withType<org.jetbrains.compose.reload.gradle.AbstractComposeHotRun>().conf
 }
 
 tasks.test {
-    useJUnitPlatform()
     // Offscreen renders of the demo trace; ScreenshotTest writes them, a human (or an agent) looks at them.
     val screenshots = layout.buildDirectory.dir("screenshots")
     outputs.dir(screenshots)
@@ -166,7 +152,7 @@ tasks.register("launchHot") {
     group = "application"
     description = "Starts the GUI with Compose Hot Reload in the background (hotRun --auto)."
     outputs.upToDateWhen { false }
-    val root = rootProject.layout.projectDirectory.asFile
+    val root = layout.settingsDirectory.asFile
     val wrapper = File(root, if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "gradlew.bat" else "gradlew")
     val log = layout.buildDirectory.file("coroutree-gui-hot.log")
     doLast {

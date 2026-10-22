@@ -31,6 +31,9 @@ Each line below is a `commandLine`. `projectRoot` is always the repository root 
 ```
 
 JDK 26 toolchain, Gradle 9.7.1 wrapper, Kotlin 2.4.20, configuration cache on. `cc` on the PATH builds the native probe.
+Versions: `gradle/libs.versions.toml`, shared with `samples/`. Build logic: `build-logic/`, two convention plugins.
+`coroutree.kotlin-jvm` (toolchain, `conventions { jvmTarget }`, 17 by default, JUnit 5) and `coroutree.publishing`
+(`maven-publish` plus the `local` repository, `build/repo`).
 
 ## Map
 

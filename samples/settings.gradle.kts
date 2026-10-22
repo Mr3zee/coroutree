@@ -17,6 +17,12 @@ dependencyResolutionManagement {
         mavenCentral()
         google()
     }
+    // The versions of the checkout, so that the corpus and its second compilation (coroutree-integration-tests) agree.
+    versionCatalogs {
+        create("libs") {
+            from(files("../gradle/libs.versions.toml"))
+        }
+    }
 }
 
 includeBuild("..")

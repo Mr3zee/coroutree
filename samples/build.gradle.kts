@@ -3,7 +3,7 @@
 //   ./gradlew -p samples coroutreeView
 
 plugins {
-    kotlin("jvm") version "2.4.20"
+    alias(libs.plugins.kotlin.jvm)
     application
     id("org.jetbrains.kotlinx.coroutree")
 }
@@ -21,7 +21,7 @@ tasks.named<JavaExec>("run") {
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation(libs.coroutines.core)
 
     // Without a classifier the dependency is substituted by the :coroutree-gui project of the included build.
     coroutreeGui("org.jetbrains.kotlinx:coroutree-gui")

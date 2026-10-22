@@ -1,10 +1,9 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 plugins {
-    `java-library`
-    alias(libs.plugins.kotlin.jvm)
+    id("coroutree.kotlin-jvm")
     alias(libs.plugins.shadow)
-    `maven-publish`
+    id("coroutree.publishing")
 }
 
 /*
@@ -17,20 +16,11 @@ plugins {
  */
 val runtime = sourceSets.create("runtime")
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(26)
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
-    }
+conventions {
+    jvmTarget = 21
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    options.release = 21
     options.compilerArgs.add("-Xlint:all,-serial")
 }
 
@@ -57,16 +47,12 @@ dependencies {
     // other implementation of the trace format what this one wrote; kotlinx.coroutines, the classes the hook table names.
     testImplementation(libs.asm)
     testImplementation(libs.asm.tree)
-    testImplementation("org.ow2.asm:asm-analysis:${libs.versions.asm.get()}")
+    testImplementation(libs.asm.analysis)
     testImplementation(project(":coroutree-model"))
     testImplementation(libs.coroutines.core)
-    testImplementation(platform(libs.junit.bom))
-    testImplementation(libs.junit.jupiter)
-    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks.test {
-    useJUnitPlatform()
     // The agent's self-checks, as in every JVM the integration tests fork.
     systemProperty("coroutree.debug", "true")
 }

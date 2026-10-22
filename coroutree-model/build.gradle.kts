@@ -1,14 +1,12 @@
 plugins {
-    alias(libs.plugins.kotlin.jvm)
+    id("coroutree.kotlin-jvm")
     alias(libs.plugins.kotlin.serialization)
-    `maven-publish`
+    id("coroutree.publishing")
 }
 
 kotlin {
-    jvmToolchain(26)
     explicitApi()
     compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
         optIn.add("kotlinx.serialization.ExperimentalSerializationApi")
     }
 }
@@ -17,20 +15,8 @@ java {
     withSourcesJar()
 }
 
-tasks.withType<JavaCompile>().configureEach {
-    options.release = 17
-}
-
 dependencies {
     api(libs.serialization.protobuf)
-
-    testImplementation(kotlin("test"))
-    testImplementation(platform(libs.junit.bom))
-    testRuntimeOnly(libs.junit.platform.launcher)
-}
-
-tasks.test {
-    useJUnitPlatform()
 }
 
 publishing {
