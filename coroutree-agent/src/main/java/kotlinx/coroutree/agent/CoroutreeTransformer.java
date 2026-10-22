@@ -35,22 +35,21 @@ final class CoroutreeTransformer implements ClassFileTransformer {
     public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain domain, byte[] bytes) {
         if (className == null) return null;
         ClassPatch patch = table.get(className);
-        // Project classes come from an application class loader; the bootstrap loader (null) never holds them.
+        // The bootstrap loader (null) has no project classes.
         boolean project = loader != null && config.isProjectClassInternalName(className);
         try {
             if (patch == null && !project) {
-                // Nothing to change, but any class may be in a stack, and a Kotlin one with inlined code in it.
+                // Unmodified classes can still contribute inline frames to captured stacks.
                 if (loader != null && !isJdkOrAgent(className)) readSourceMap(className, bytes);
                 return null;
             }
             if (patch != null && patch.changesShape() && classBeingRedefined != null) {
-                // Cannot add a field to a loaded class. Only happens if the agent is attached to a running JVM.
-                Tracer.diagnostic(Wire.ERROR, className.replace('/', '.') + " was loaded before the agent; coroutines will not be traced");
+                Tracer.diagnostic(Wire.ERROR, className.replace('/', '.') + " was loaded before the agent, so coroutines aren't traced.");
                 return null;
             }
             return rewrite(loader, className, patch, project, bytes);
         } catch (Throwable e) {
-            Tracer.diagnostic(Wire.ERROR, "cannot instrument " + className.replace('/', '.') + ": " + e);
+            Tracer.diagnostic(Wire.ERROR, "can't instrument " + className.replace('/', '.') + ": " + e);
             return null;
         }
     }
@@ -67,14 +66,14 @@ final class CoroutreeTransformer implements ClassFileTransformer {
             if (className.equals(HookTable.JOB_SUPPORT)) checkCoroutinesVersion(loader);
             if (!missing.isEmpty()) {
                 Tracer.diagnostic(Wire.ERROR, "Unsupported version of " + className.replace('/', '.') + ": no " + String.join(", ", missing)
-                    + ". The trace will be incomplete or wrong.");
+                    + ". The trace is incomplete or wrong.");
             }
         }
-        // Before the class changes. Not that hooks have lines, but this is about the class as it was compiled.
+        // Read source metadata before instrumentation changes the class.
         readSourceMap(node);
         if (project) changed |= CatchPatch.apply(node);
         if (!changed) return null;
-        // Only max stack and locals are recomputed; see MethodPatch for why frames are not.
+        // MethodPatch requires the original frames to avoid class loading during transformation.
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         return writer.toByteArray();
@@ -82,7 +81,6 @@ final class CoroutreeTransformer implements ClassFileTransformer {
 
     private static final String SUSPEND_MAIN_TAIL = "Lkotlin/coroutines/Continuation;)Ljava/lang/Object;";
 
-    /** What {@link SourceMaps} wants to know of a class, from its tree: all of it. */
     static void readSourceMap(ClassNode node) {
         String className = node.name.replace('/', '.');
         if (node.sourceDebug != null) SourceMaps.register(className, node.sourceDebug, InlinedCalls.of(node));
@@ -98,9 +96,7 @@ final class CoroutreeTransformer implements ClassFileTransformer {
     }
 
     /**
-     * The same of a class that is otherwise left alone, without reading its code: the source map is an attribute, and
-     * a reader skips the code of every method it gets no visitor for. Minus the inline calls between the innermost
-     * and the outermost, which take the code.
+     * Skips method code except for suspend main line numbers. Intermediate inline calls need the full tree overload.
      */
     static void readSourceMap(String className, byte[] bytes) {
         String name = className.replace('/', '.');
@@ -138,9 +134,9 @@ final class CoroutreeTransformer implements ClassFileTransformer {
         } catch (IOException ignored) {
         }
         int[] tested = HookTable.TESTED_COROUTINES;
-        String range = tested[0] + "." + tested[1] + " – " + tested[2] + "." + tested[3];
+        String range = tested[0] + "." + tested[1] + " to " + tested[2] + "." + tested[3];
         if (version == null) {
-            Tracer.diagnostic(Wire.WARNING, "Cannot tell the version of kotlinx.coroutines; this agent was tested with " + range);
+            Tracer.diagnostic(Wire.WARNING, "Can't find the version of kotlinx.coroutines. This agent was tested with " + range + ".");
             return;
         }
         String[] parts = version.split("[.-]");
@@ -150,11 +146,11 @@ final class CoroutreeTransformer implements ClassFileTransformer {
             boolean below = major < tested[0] || major == tested[0] && minor < tested[1];
             boolean above = major > tested[2] || major == tested[2] && minor > tested[3];
             if (below || above) {
-                Tracer.diagnostic(Wire.WARNING, "kotlinx.coroutines " + version + " is outside the range this agent was tested with (" + range
-                    + "). It instruments library internals; a mismatch is reported as an error, the absence of one is not a guarantee.");
+                Tracer.diagnostic(Wire.WARNING, "kotlinx.coroutines " + version + " is outside the tested range " + range
+                    + ". The agent reports a known mismatch as an error, but it can't find every mismatch.");
             }
         } catch (RuntimeException e) {
-            Tracer.diagnostic(Wire.WARNING, "Unrecognized kotlinx.coroutines version '" + version + "'; this agent was tested with " + range);
+            Tracer.diagnostic(Wire.WARNING, "Unrecognized kotlinx.coroutines version '" + version + "'. This agent was tested with " + range + ".");
         }
     }
 }

@@ -384,7 +384,7 @@ class AgentAttachmentFunctionalTest {
         val view = project.runnerWithoutPlugin("coroutreeView").build()
         assertEquals(3, view.tasks.count { it.path.endsWith(":coroutreeView") && it.outcome == TaskOutcome.SUCCESS })
         assertEquals(1, Regex("coroutree GUI started").findAll(view.output).count(), view.output)
-        assertEquals(listOf(listOf("--dir", File(project.dir, "build/coroutree").path, "--open-latest")), GuiLaunches.await(File(project.dir, "build/coroutree"), 1))
+        assertEquals(listOf(emptyList()), GuiLaunches.await(File(project.dir, "build/coroutree"), 1))
         assertTrue(File(project.dir, "build/coroutree/gui.log").isFile)
     }
 }

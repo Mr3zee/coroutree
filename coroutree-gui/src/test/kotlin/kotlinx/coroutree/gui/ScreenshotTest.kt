@@ -5,15 +5,17 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import kotlinx.coroutree.gui.source.FeedStatus
+import kotlinx.coroutree.gui.source.SessionEntry
 import kotlinx.coroutree.gui.source.SessionInfo
+import kotlinx.coroutree.gui.source.SessionState
 import kotlinx.coroutree.gui.ui.CoroutreeTheme
-import kotlinx.coroutree.gui.ui.DirListing
 import kotlinx.coroutree.gui.ui.StartScreen
 import kotlinx.coroutree.gui.ui.TraceScreen
 import kotlinx.coroutree.gui.view.TraceViewModel
 import kotlinx.coroutree.model.EventKind
 import kotlinx.coroutree.model.tree.TraceStore
 import java.io.File
+import java.nio.file.Files
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -150,14 +152,21 @@ class ScreenshotTest {
 
     @Test
     fun startScreen() {
-        val dir = File("/Users/me/shop/build/coroutree")
-        val listing = DirListing(
-            sessions = listOf(SessionInfo(null, 4242, 5555, "t", null, ":shop:run", "b", "demo.shop.CheckoutKt", System.currentTimeMillis(), ended = false)),
-            traces = listOf(File(dir, "traces/20260917-201500/run-4242.ctrace"), File(dir, "traces/20260917-194200/test-4100.ctrace")),
+        val dir = File("/Users/me/.coroutree/sessions")
+        val now = System.currentTimeMillis()
+        // A recent run is offered only while its trace file is there, so these have one.
+        val traces = Files.createTempDirectory("coroutree-screenshot").toFile().also { it.deleteOnExit() }
+        fun session(pid: Long, task: String, command: String, startedAt: Long, ended: Boolean, port: Int = 5555) =
+            SessionInfo(null, pid, port, "t", File(traces, "run-$pid.ctrace").apply { writeText("x"); deleteOnExit() }, task, "b", command, startedAt, ended)
+        val sessions = listOf(
+            SessionEntry(session(4242, ":shop:run", "demo.shop.CheckoutKt", now - 65_000, ended = false), SessionState.RUNNING),
+            SessionEntry(session(4310, "", "demo.shop.ReportKt --fast", now - 20_000, ended = false, port = 0), SessionState.RUNNING),
+            SessionEntry(session(4100, ":shop:test", "worker.org.gradle.process.internal.worker.GradleWorkerMain", now - 1_800_000, ended = true), SessionState.ENDED),
+            SessionEntry(session(3990, ":shop:run", "demo.shop.CheckoutKt", now - 7_200_000, ended = false), SessionState.CRASHED),
         )
         for (dark in listOf(false, true)) {
             capture(if (dark) "start-dark" else "start-light", width = 1000, height = 640) {
-                CoroutreeTheme(dark) { StartScreen(dir, listing, onOpen = {}, onChooseTraceFile = {}, onChooseDir = {}) }
+                CoroutreeTheme(dark) { StartScreen(dir, sessions, onOpen = {}, onChooseTraceFile = {}) }
             }
         }
     }

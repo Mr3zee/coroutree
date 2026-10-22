@@ -29,7 +29,7 @@ final class MonitorProbeLoader {
             InputStream library = resource == null ? null : MonitorProbeLoader.class.getResourceAsStream(RESOURCE_ROOT + resource);
             if (library == null) {
                 Tracer.diagnostic(Wire.INFO, "This agent has no monitor probe for " + System.getProperty("os.name") + " "
-                    + System.getProperty("os.arch") + ": threads blocked on 'synchronized' are not reported, everything else is.");
+                    + System.getProperty("os.arch") + ", so threads blocked on 'synchronized' aren't reported.");
                 return;
             }
             File file;
@@ -41,7 +41,7 @@ final class MonitorProbeLoader {
             }
             MonitorProbe.loadAndConnect(file.getAbsolutePath());
         } catch (IOException | RuntimeException | LinkageError e) {
-            Tracer.diagnostic(Wire.WARNING, "Cannot load the monitor probe, threads blocked on 'synchronized' are not reported: " + e);
+            Tracer.diagnostic(Wire.WARNING, "Can't load the monitor probe, so threads blocked on 'synchronized' aren't reported: " + e);
         }
     }
 

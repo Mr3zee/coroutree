@@ -7,8 +7,7 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetContainer
 import org.jetbrains.kotlin.gradle.plugin.KotlinTargetsContainer
 
 /**
- * The only place that touches Kotlin Gradle plugin types. It is compiled against them but must not be loaded
- * unless a Kotlin plugin is applied, so nothing else may refer to those types, not even in a signature.
+ * Load only after a Kotlin plugin is applied. Other classes must not reference Kotlin Gradle plugin types, even in signatures.
  */
 internal object KotlinSourceSets {
     fun forEachJvmSourceSet(project: Project, action: (name: String, directories: FileCollection) -> Unit) {
@@ -18,7 +17,7 @@ internal object KotlinSourceSets {
             kotlin.targets.all { target ->
                 if (target.platformType != KotlinPlatformType.jvm) return@all
                 target.compilations.all { compilation ->
-                    // The set keeps growing while the build script adds dependsOn edges, so it is read late.
+                    // Read after configuration because dependsOn edges can add source sets.
                     val directories = project.provider { compilation.allKotlinSourceSets.map { it.kotlin.sourceDirectories } }
                     action(compilation.name, project.files(directories))
                 }

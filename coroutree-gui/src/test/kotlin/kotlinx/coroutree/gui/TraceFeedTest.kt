@@ -91,9 +91,14 @@ class TraceFeedTest {
     fun fallsBackToTheTraceFileWhenNobodyListens() {
         val file = Files.createTempFile("feed", ".ctrace").toFile().apply { writeBytes(traceBytes(frames)) }
         val deadPort = ServerSocket(0).use { it.localPort }
-        for (info in listOf(session(deadPort, file), session(deadPort, file, ended = true))) {
-            val snapshot = awaitStatus(TraceFeed(TraceSource.Session(info), scope), FeedStatus.RECORDED)
-            assertEquals(expected.events.size, snapshot.events.size)
+        val cases = listOf(
+            session(deadPort, file) to FeedStatus.PARTIAL, // the JVM crashed, or is still writing
+            session(0, file) to FeedStatus.PARTIAL, // started without a socket: nothing to try
+            session(deadPort, file, ended = true) to FeedStatus.RECORDED,
+        )
+        for ((info, status) in cases) {
+            val snapshot = awaitStatus(TraceFeed(TraceSource.Session(info), scope), status)
+            assertEquals(expected.events.size, snapshot.events.size, "$status")
         }
     }
 

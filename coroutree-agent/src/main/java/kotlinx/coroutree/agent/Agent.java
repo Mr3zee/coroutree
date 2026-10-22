@@ -20,7 +20,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Wires the pieces together once the runtime is reachable. See {@link Premain} for why this is a separate class. */
+/** Must load after {@link Premain} makes the runtime available on the bootstrap classpath. */
 final class Agent {
     private Agent() {}
 
@@ -29,8 +29,7 @@ final class Agent {
         HookTable table = new HookTable();
         CoroutreeTransformer transformer = new CoroutreeTransformer(table, config);
 
-        // A transformer that loads classes while a class is being loaded invites circularity errors. Run it once
-        // outside of class loading so that ASM and everything else it needs is loaded and linked before it is installed.
+        // Load and link transformer dependencies before installation to avoid circular class loading during transformation.
         warmUp(transformer, table);
 
         Tracer.start(config);
@@ -50,8 +49,8 @@ final class Agent {
                 CoroutreeTransformer.readSourceMap(sample, bytes);
             }
         }
-        // No class of the JDK has a source map of inlined Kotlin code, or a suspend fun main. This one goes all the way
-        // through both readers and leaves nothing behind: its map maps a line to itself, its main is on no line.
+        // JDK classes don't exercise inline source maps or suspend main detection.
+        // This synthetic class exercises both readers and registers no usable source locations.
         ClassNode inlined = new ClassNode();
         inlined.version = Opcodes.V17;
         inlined.name = "kotlinx/coroutree/agent/WarmUp";
@@ -75,7 +74,6 @@ final class Agent {
         CoroutreeTransformer.readSourceMap(inlined.name, writer.toByteArray());
     }
 
-    /** The JDK classes in the table were loaded long before the agent; kotlin and kotlinx classes normally were not. */
     private static void retransformLoaded(Instrumentation instrumentation, HookTable table) {
         Set<String> wanted = new HashSet<>();
         for (String name : table.classNames()) wanted.add(name.replace('/', '.'));
@@ -83,12 +81,12 @@ final class Agent {
         for (Class<?> type : instrumentation.getAllLoadedClasses()) {
             if (wanted.contains(type.getName()) && instrumentation.isModifiableClass(type)) loaded.add(type);
         }
-        // One by one: a class the JVM refuses to retransform should cost its own hooks, not everybody's.
+        // Retransform separately so one failure doesn't prevent instrumentation of other classes.
         for (Class<?> type : loaded) {
             try {
                 instrumentation.retransformClasses(type);
             } catch (Throwable e) {
-                Tracer.diagnostic(Wire.WARNING, "cannot instrument " + type.getName() + ", events from it will be missing: " + e);
+                Tracer.diagnostic(Wire.WARNING, "can't instrument " + type.getName() + ", so its events are missing: " + e);
             }
         }
     }

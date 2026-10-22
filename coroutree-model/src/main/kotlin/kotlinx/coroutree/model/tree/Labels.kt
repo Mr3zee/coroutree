@@ -12,11 +12,6 @@ import kotlinx.coroutree.model.PaceDef
 import kotlinx.coroutree.model.PropagationDirection
 import kotlinx.coroutree.model.StackFrameDef
 
-/*
- * Human-readable wording of nodes and events. Lives next to the model so that the GUI, the golden-tree tests and
- * (later) the static mode all describe the same thing with the same words.
- */
-
 /** `launch "worker"`, `Thread "main"`, `withContext`. */
 public val NodeSnapshot.title: String
     get() {
@@ -39,7 +34,7 @@ public val CrossLink.Kind.verb: String
         CrossLink.Kind.INTERRUPTS -> "interrupts"
     }
 
-/** The same for the link from a coroutine to the thread it is running on, which is a property of the node, not a [CrossLink]. */
+/** Label for the link from a coroutine to its current thread. */
 public const val RUNS_ON_VERB: String = "runs on"
 
 /** `Main.kt:12`, or an empty string when the frame carries no file name. */
@@ -51,8 +46,8 @@ public val StackFrameDef.shortLocation: String
     }
 
 /**
- * `com.acme.MainKt.main(Main.kt:12)`, the way the JVM prints it; `inline com.acme.UtilKt.retry(Util.kt:7)` for the
- * body of an inline function, which the JVM does not know of.
+ * `com.acme.MainKt.main(Main.kt:12)` for a JVM frame.
+ * `inline com.acme.UtilKt.retry(Util.kt:7)` for the body of an inline function.
  */
 public val StackFrameDef.qualified: String
     get() {
@@ -83,8 +78,7 @@ public fun ContextChange.describe(): String {
 }
 
 /**
- * Whether the frame belongs to a concurrency runtime (the JDK, the Kotlin standard library, kotlinx.coroutines)
- * rather than to code that uses one. Same rule as the agent applies when it picks a node's source site.
+ * Whether the frame belongs to the JDK, the Kotlin standard library, or kotlinx.coroutines.
  */
 public val StackFrameDef.isRuntimeFrame: Boolean
     get() = RUNTIME_PREFIXES.any { className.startsWith(it) }
@@ -92,8 +86,7 @@ public val StackFrameDef.isRuntimeFrame: Boolean
 private val RUNTIME_PREFIXES = listOf("java.", "javax.", "jdk.", "sun.", "kotlin.", "kotlinx.coroutines.")
 
 /**
- * The frame of a stack that says where in the program something happened: the innermost one outside the concurrency
- * runtime. `delay` suspends in `Delay.kt`; what one wants to know is who called `delay`.
+ * Returns the innermost frame outside the concurrency runtime, or the innermost frame if all frames are runtime frames.
  */
 public fun TraceSnapshot.siteOf(stack: List<Int>): StackFrameDef? {
     val frames = stack.mapNotNull(::frame)
@@ -153,8 +146,8 @@ public fun TraceSnapshot.describe(event: Event, viewpoint: Long = 0): String {
 }
 
 /**
- * A pace the way one says it: `2 events/s`, `1 event in 5 s`, `full speed`. It is a pace *per sequence* (events made
- * by one flow, or happening to one node); parallel sequences each run at it.
+ * `2 events/s`, `1 event in 5 s`, or `full speed`.
+ * The pace applies separately to each sequence: one flow or one node.
  */
 public fun paceLabel(intervalNanos: Long): String {
     if (intervalNanos <= 0) return "full speed"
@@ -164,7 +157,6 @@ public fun paceLabel(intervalNanos: Long): String {
     return "$count ${if (count == "1") "event" else "events"}/s"
 }
 
-/** To one decimal, and without it where it would be a zero or the number is large anyway. */
 private fun rounded(value: Double): String {
     val tenths = Math.round(value * 10)
     return if (value >= 100 || tenths % 10 == 0L) Math.round(value).toString() else "${tenths / 10}.${tenths % 10}"
@@ -174,8 +166,7 @@ private fun rounded(value: Double): String {
 public fun PaceSetting.describe(): String = if (paused) "paused" else paceLabel(intervalNanos)
 
 /**
- * One line for a change of the gate's settings, for the event log: what holds from here on, for whom, and, where it
- * was not somebody's command, why.
+ * Describes an execution-control change for the event log: the setting, its scope, and the reason for automatic changes.
  */
 public fun TraceSnapshot.describe(change: PaceDef): String {
     val whose = if (change.scopeNodeId == 0L) "" else "subtree of ${node(change.scopeNodeId)?.title ?: "node #${change.scopeNodeId}"}: "

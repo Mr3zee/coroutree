@@ -378,7 +378,7 @@ class GraphPaneUiTest {
     fun aTraceOfNothingButLibraryNodesSaysWhereTheyAre() = test(
         initial = snapshotOf(trace { node(1, 0, origin = kotlinx.coroutree.model.Origin.LIBRARY); node(2, 1, origin = kotlinx.coroutree.model.Origin.LIBRARY) }),
     ) {
-        onNodeWithText("All 2 nodes so far are library machinery — switch on “library / pools” to see them").assertExists()
+        onNodeWithText("All 2 nodes so far are library nodes. Switch on “library / pools” to see them.").assertExists()
         onNodeWithTag("toggle-library").performClick()
         waitForIdle()
         onNodeWithTag("node-2").assertExists()

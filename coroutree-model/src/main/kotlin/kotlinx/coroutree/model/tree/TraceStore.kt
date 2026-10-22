@@ -17,8 +17,8 @@ import java.util.TreeMap
 /**
  * Folds trace frames into the concurrency tree.
  *
- * Not thread-safe: one thread feeds frames and takes [snapshot]s; the snapshots are immutable and may go anywhere.
- * Taking a snapshot costs O(nodes changed since the previous one) plus one shallow copy of the node map.
+ * Not thread-safe. One thread feeds frames and takes snapshots. Other threads can read the immutable snapshots.
+ * A snapshot costs O(changed nodes) plus a shallow copy of the node map when nodes change.
  */
 public class TraceStore {
     private class MutableNode(var info: NodeInfo, var placeholder: Boolean) {
@@ -50,8 +50,7 @@ public class TraceStore {
     private val nodes = HashMap<Long, MutableNode>()
     private val roots = AppendLog<Long>()
 
-    // Placeholders start as roots and move under their parent once defined. The log cannot remove, and this only
-    // happens to ids referenced before their definition, so such roots are filtered out when a snapshot is taken.
+    // Placeholders can gain a parent after definition. The append-only root log needs a separate removal set.
     private val formerRoots = HashSet<Long>()
     private val events = AppendLog<Event>()
     private val frames = AppendLog<StackFrameDef?>().apply { add(null) } // frame ids start at 1
@@ -61,8 +60,7 @@ public class TraceStore {
     private val paceChanges = AppendLog<PaceDef>()
     private var pace = PaceState.NONE
 
-    // Frames of concurrent threads reach the file slightly out of order; sequence numbers are dense, so the
-    // historical order is restored exactly by holding events back until their predecessors have arrived.
+    // Concurrent threads can write events out of order. Dense sequence numbers identify missing predecessors.
     private val pending = TreeMap<Long, Event>()
     private var nextSeq = 1L
 
@@ -82,7 +80,7 @@ public class TraceStore {
         frame.pace?.let(::applyPace)
     }
 
-    /** No more frames will come: releases events still held back behind a gap in the sequence. */
+    /** Marks the stream complete and releases pending events despite sequence gaps. */
     public fun endOfStream() {
         published = null
         drainPending()
@@ -196,8 +194,6 @@ public class TraceStore {
     private fun define(info: NodeInfo): MutableNode {
         val existing = nodes[info.id]
         if (existing != null) {
-            // Defined after something already referred to it: fill the placeholder in. It stays where it was put,
-            // except that a placeholder root moves under its parent now that the parent is known.
             if (existing.placeholder) {
                 existing.info = info
                 existing.placeholder = false

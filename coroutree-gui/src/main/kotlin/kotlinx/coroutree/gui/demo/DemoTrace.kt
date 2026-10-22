@@ -163,7 +163,7 @@ object DemoTrace {
             frames += Frame(
                 diagnostic = Diagnostic(
                     Diagnostic.Severity.WARNING,
-                    "kotlinx-coroutines-core 1.9.0 is older than the versions coroutree was tested with (1.10.2 – 1.11.0); cancellation events may be incomplete.",
+                    "kotlinx.coroutines 1.9.0 is outside the tested range 1.10.2 to 1.11.0. Cancellation events can be incomplete.",
                 )
             )
 

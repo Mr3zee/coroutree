@@ -3,36 +3,33 @@ package kotlinx.coroutree.gui.view.graph
 import kotlin.math.max
 import kotlin.math.min
 
-/** A drawing reduced to what the invariant talks about: rectangles, axis-aligned segments, label boxes. */
 class Drawing(val boxes: List<DrawnBox>, val lines: List<DrawnLine>)
 
 class DrawnBox(val id: Long, val rect: Rect)
 
 /**
- * One line of the drawing: an edge, or the structural edges of one parent, which the design allows to share a trunk
- * and therefore counts as one line.
+ * One parent's structural edges count as one line because they can share a trunk.
  */
 class DrawnLine(val name: String, val segments: List<Segment>, val ends: List<LineEnd>, val label: Rect?)
 
 /** Where a line meets a box it belongs to. */
 class LineEnd(val point: Point, val boxId: Long)
 
-/** [rule] is the number of the rule in DESIGN §6.2; 0 for a drawing that is malformed before any rule applies. */
+/** [rule] matches DESIGN §6.2, or is 0 for a malformed drawing. */
 data class Violation(val rule: Int, val message: String) {
     override fun toString(): String = "rule $rule: $message"
 }
 
 /**
- * Checks a settled drawing against the drawing invariant of DESIGN §6.2. It knows nothing of how the engine works:
- * it looks at the shapes only, so it holds the engine to the rules rather than to its own idea of them.
+ * Checks shapes independently of the layout engine against the drawing invariant of DESIGN §6.2:
  *
  * 1. No two boxes are closer than [minBoxGap].
  * 2. No two lines are closer than [minLineGap] anywhere, unless they cross.
  * 3. Two lines cross at one point, at a right angle, at least [minLineGap] away from any bend or end of either.
- * 4. A line keeps [boxClearance] from every box except the ones it ends at, and those it touches with its end only.
- * 5. A label lies on its own line and keeps [labelClearance] from every box, every other label and every other line.
+ * 4. A line stays [boxClearance] from non-endpoint boxes. It touches endpoint boxes only at its ends.
+ * 5. A label lies on its own line, at least [labelClearance] from boxes, other labels, and other lines.
  *
- * Distances are in the maximum norm. The cost is that of the pairs that are near each other, not of all pairs.
+ * Distances use the maximum norm.
  */
 class InvariantChecker(
     private val minBoxGap: Int = GraphMetrics.BOX_GAP,
@@ -54,7 +51,7 @@ class InvariantChecker(
         private val endBoxes = drawing.lines.map { line -> line.ends.mapTo(HashSet()) { it.boxId } }
         private val reach = max(max(minBoxGap, minLineGap), max(boxClearance, labelClearance))
 
-        // Union-find over the segments of each line: a line is one connected shape.
+        // All segments of a line must form one connected shape.
         private val offsets = IntArray(drawing.lines.size + 1)
         private lateinit var component: IntArray
 
@@ -174,8 +171,7 @@ class InvariantChecker(
                 if (segment.bounds.distanceTo(box.rect) < boxClearance) report(4, "${line.name} comes back to its own box ${box.id}: $segment vs ${box.rect}")
                 return
             }
-            // The segment that ends here touches the outline with that end and with nothing else: what remains of it
-            // one step away from the end is outside the box.
+            // Only the endpoint can touch the box. The rest of the segment must be outside it.
             val rest = when {
                 segment.length <= 1 -> null
                 segment.vertical -> if (end.point.y == segment.y1) Segment(segment.x1, segment.y1 + 1, segment.x2, segment.y2) else Segment(segment.x1, segment.y1, segment.x2, segment.y2 - 1)
@@ -213,12 +209,6 @@ class InvariantChecker(
             component[find(a)] = find(b)
         }
 
-        /**
-         * Calls [action] once for every two shapes whose bounds are within [reach] of each other. Sweep and prune:
-         * shapes are met in order along the axis the drawing is longer in, and each is compared with the ones still
-         * open at that point. A forest is either wide or deep, and along its long axis few shapes are open at once
-         * (the long lines of a channel are, but comparing against them is two integer comparisons each).
-         */
         private fun forEachNearPair(shapes: List<Shape>, action: (Shape, Shape) -> Unit) {
             if (shapes.isEmpty()) return
             val grown = shapes.map { it.bounds.inflated((reach + 1) / 2) }

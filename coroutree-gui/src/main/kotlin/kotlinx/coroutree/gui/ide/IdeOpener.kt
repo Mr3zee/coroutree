@@ -25,7 +25,7 @@ class IdeOpener(private val commandTemplate: String? = null) {
     }
 
     suspend fun open(location: SourceLocation): Outcome = withContext(Dispatchers.IO) {
-        if (!File(location.absolutePath).isFile) return@withContext Outcome.Failed("No such file here: ${location.absolutePath}")
+        if (!File(location.absolutePath).isFile) return@withContext Outcome.Failed("No such file on this machine: ${location.absolutePath}")
         try {
             if (commandTemplate != null) {
                 run(buildCommand(commandTemplate, location.absolutePath, location.line))
@@ -35,7 +35,7 @@ class IdeOpener(private val commandTemplate: String? = null) {
                 run(buildCommand(DEFAULT_COMMAND, location.absolutePath, location.line))
             }
         } catch (e: Exception) {
-            Outcome.Failed("Could not open ${location.path}: ${e.message ?: e.javaClass.simpleName}")
+            Outcome.Failed("Can't open ${location.path}: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 

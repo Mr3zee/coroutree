@@ -1,13 +1,11 @@
 package kotlinx.coroutree.gui.view.graph
 
-/** A node where the engine put it. [rect] may be wider than the node asked for: a box is as wide as its ports need. */
 class NodeBox(val node: GraphNode, val rect: Rect, val depth: Int) {
     val id: Long get() = node.id
 }
 
 /**
- * The structural edges of one parent, drawn as one shape: a trunk down from the parent to a horizontal bus, and a
- * drop from the bus to each child. With a single child it is one straight line.
+ * Structural edges of one parent share a trunk and horizontal bus. Each child has a drop from the bus.
  */
 class Trunk(
     val parentId: Long,
@@ -33,7 +31,7 @@ class Trunk(
 
     val bounds: Rect by lazy { Rect(minOf(top.x, drops.first().x), top.y, maxOf(top.x, drops.last().x), drops.maxOf { it.y }) }
 
-    /** The way from the parent to one child along the shape, or `null` if [childId] is not a child. */
+    /** Path along the shape to [childId], or null if it isn't a child. */
     fun pathTo(childId: Long): List<Point>? {
         val drop = drops.getOrNull(childIds.indexOf(childId)) ?: return null
         if (drop.x == top.x) return listOf(top, drop)
@@ -45,7 +43,7 @@ class Trunk(
 class LinkRoute(
     val link: GraphLink,
     val points: List<Point>,
-    /** Where the label goes, centred on one of the route's horizontal pieces; `null` when no room could be found. */
+    /** Centered on a horizontal segment, or null if no segment has room. */
     val label: Rect?,
 ) {
     val segments: List<Segment> get() = points.zipWithNext { a, b -> Segment(a.x, a.y, b.x, b.y) }
@@ -53,12 +51,12 @@ class LinkRoute(
     val bounds: Rect by lazy { Rect(points.minOf { it.x }, points.minOf { it.y }, points.maxOf { it.x }, points.maxOf { it.y }) }
 }
 
-/** A settled drawing of a [GraphModel]: what the invariant (DESIGN §6.2) is about. */
+/** The drawing invariant (DESIGN §6.2) applies to this settled layout. */
 class GraphLayout internal constructor(
     /** In the order of [GraphModel.nodes]. */
     val boxes: List<NodeBox>,
     val trunks: List<Trunk>,
-    /** In the order of [GraphModel.links], without the ones that could not be drawn (an end that is not in the graph, a self-link). */
+    /** [GraphModel.links] order, excluding self-links and links with missing endpoints. */
     val routes: List<LinkRoute>,
     val bounds: Rect,
     /** Top of each layer, and the indices into [boxes] of its nodes from left to right. */
@@ -71,7 +69,6 @@ class GraphLayout internal constructor(
 
     val isEmpty: Boolean get() = boxes.isEmpty()
 
-    /** The boxes that intersect [area], found without looking at the others: only what is in the viewport is drawn. */
     fun boxesIn(area: Rect): List<NodeBox> {
         val result = ArrayList<NodeBox>()
         for (layer in layerTops.indices) {
@@ -79,7 +76,6 @@ class GraphLayout internal constructor(
             if (top > area.bottom) break
             if (top + GraphMetrics.NODE_HEIGHT < area.top) continue
             val row = layerBoxes[layer]
-            // First box whose right edge reaches the area.
             var lo = 0
             var hi = row.size
             while (lo < hi) {
@@ -93,7 +89,6 @@ class GraphLayout internal constructor(
 
     fun boxAt(x: Int, y: Int): NodeBox? = boxesIn(Rect(x, y, x, y)).firstOrNull()
 
-    /** Everything as plain shapes, for the [InvariantChecker]. */
     fun toDrawing(): Drawing = Drawing(
         boxes = boxes.map { DrawnBox(it.id, it.rect) },
         lines = trunks.map { trunk ->

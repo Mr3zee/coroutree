@@ -11,18 +11,18 @@ import java.util.List;
 /**
  * Stands in for the GUI, under the name of its main class: the same jar is the fake agent and, on the
  * {@code coroutreeGui} configuration, what {@code coroutreeView} launches. Each start appends its arguments,
- * one per line between {@code launched} and {@code end}, to {@code launched.txt} in the directory given by {@code --dir}.
+ * one per line between {@code launched} and {@code end}, to {@code launched.txt} in the directory given by {@code --dir},
+ * or else in the working directory (which is where {@code coroutreeView} starts it: the build's data directory).
  */
 public final class MainKt {
     private MainKt() {
     }
 
     public static void main(String[] args) throws IOException {
-        Path dir = null;
+        Path dir = Path.of("");
         for (int i = 0; i + 1 < args.length; i++) {
             if (args[i].equals("--dir")) dir = Path.of(args[i + 1]);
         }
-        if (dir == null) throw new IllegalArgumentException("No --dir among " + String.join(" ", args));
         System.out.println("fake GUI is up in " + Path.of("").toAbsolutePath());
         Files.createDirectories(dir);
         List<String> lines = new ArrayList<>();

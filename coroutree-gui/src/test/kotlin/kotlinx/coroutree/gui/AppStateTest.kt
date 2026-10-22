@@ -12,9 +12,11 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutree.gui.demo.DemoTrace
 import kotlinx.coroutree.gui.ide.IdeOpener
 import kotlinx.coroutree.gui.source.FeedStatus
 import kotlinx.coroutree.gui.source.SessionInfo
+import kotlinx.coroutree.gui.source.SessionRegistry
 import kotlinx.coroutree.gui.source.TraceSource
 import kotlinx.coroutree.model.Frame
 import kotlinx.coroutree.model.SourceFile
@@ -22,22 +24,26 @@ import kotlinx.coroutree.model.SourceIndex
 import kotlinx.coroutree.model.SourceModule
 import kotlinx.coroutree.model.StackFrameDef
 import kotlinx.coroutree.model.TraceHeader
+import kotlinx.coroutree.model.tree.TraceSnapshot
 import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/** What outlives a single trace: which one is open, the build directory on offer, the way to the IDE, the note at the bottom. */
+/** What outlives a single trace: which one is open, the registry on offer, the way to the IDE, the note at the bottom. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppStateTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -60,7 +66,7 @@ class AppStateTest {
     /** AppState.message: "Transient, self-dismissing note". */
     @Test
     fun aNoteGoesAwayByItselfAndANewerOneStartsItsOwnTime() = runTest {
-        val app = AppState(backgroundScope, IdeOpener(), initialDir = null)
+        val app = AppState(backgroundScope, IdeOpener(), SessionRegistry(temp))
         assertNull(app.message)
         app.show("first")
         advanceTimeBy(4_000)
@@ -88,9 +94,11 @@ class AppStateTest {
                     }
                 }
             }
-            val app = AppState(scope, IdeOpener(), initialDir = null)
+            val app = AppState(scope, IdeOpener(), SessionRegistry(temp))
             assertNull(app.current)
             app.close() // nothing open: nothing happens
+            app.disconnect()
+            app.reconnect()
 
             val session = TraceSource.Session(SessionInfo(null, 1, server.localPort, "secret", null, ":run", "b", "Main", 1, ended = false))
             app.open(session)
@@ -109,27 +117,60 @@ class AppStateTest {
         }
     }
 
+    /** "Disconnect": the JVM is left alone, the trace stays; "Reconnect": the same JVM again, the same view. */
     @Test
-    fun theBuildDirectoryOnOfferIsRememberedWhenChosenAndOnlyOfferedWhileItExists() {
-        val remembered = ArrayList<File>()
-        val gone = File(temp, "was-here")
-        val app = AppState(scope, IdeOpener(), initialDir = gone, rememberDir = remembered::add)
-        assertEquals(gone, app.dir)
-        assertNull(app.coroutreeDir(), "last time's directory has been cleaned away")
-        assertTrue(remembered.isEmpty(), "what was only restored is not written back")
+    fun disconnectingKeepsTheTraceOnScreenAndReconnectingKeepsTheView() {
+        val connections = LinkedBlockingQueue<String>()
+        ServerSocket(0, 2, InetAddress.getLoopbackAddress()).use { server ->
+            thread(isDaemon = true) {
+                runCatching {
+                    while (true) server.accept().use { client ->
+                        val frames = DemoTrace.frames()
+                        client.getOutputStream().apply { write(traceBytes(frames.take(frames.indexOfFirst { it.event != null } + 1))); flush() }
+                        connections += client.getInputStream().bufferedReader(Charsets.US_ASCII).readLine()
+                        client.getInputStream().readAllBytes() // until the GUI hangs up
+                        connections += "hung up"
+                    }
+                }
+            }
+            val app = AppState(scope, IdeOpener(), SessionRegistry(temp))
+            app.open(TraceSource.Session(SessionInfo(null, 1, server.localPort, "secret", null, ":run", "b", "Main", 1, ended = false, paceable = true)))
+            val first = assertNotNull(app.current)
+            runBlocking { withTimeout(10_000) { first.feed.status.first { it == FeedStatus.LIVE } } }
+            assertEquals("secret", connections.poll(10, TimeUnit.SECONDS))
+            runBlocking { withTimeout(10_000) { first.feed.snapshot.first { it.nodes.isNotEmpty() } } }
+            first.viewModel.snapshot = first.feed.snapshot.value
+            first.viewModel.selectNode(first.viewModel.snapshot.nodes.keys.first())
 
-        val chosen = File(temp, "build/coroutree").apply { mkdirs() }
-        app.chooseDir(chosen)
-        assertEquals(chosen, app.dir)
-        assertEquals(chosen, app.coroutreeDir()?.dir)
-        assertEquals(listOf(chosen), remembered)
+            app.disconnect()
+            runBlocking { withTimeout(10_000) { first.feed.status.first { it == FeedStatus.DISCONNECTED } } }
+            assertEquals("hung up", connections.poll(10, TimeUnit.SECONDS))
+            assertSame(first, app.current, "the trace is still on screen")
+            assertNotNull(first.feed.snapshot.value.header, "as far as it was seen")
+
+            app.reconnect()
+            val second = assertNotNull(app.current)
+            assertNotSame(first, second)
+            assertSame(first.viewModel, second.viewModel, "selection and viewport survive")
+            assertEquals(first.feed.source, second.feed.source)
+            assertTrue(first.shows(TraceSnapshot.EMPTY, FeedStatus.CONNECTING), "a trace opened fresh is shown from its first snapshot")
+            assertFalse(second.shows(TraceSnapshot.EMPTY, FeedStatus.CONNECTING), "the view keeps what it has until the replay has caught up")
+            assertFalse(second.shows(TraceSnapshot.EMPTY, FeedStatus.LIVE))
+            assertTrue(second.shows(first.feed.snapshot.value, FeedStatus.LIVE), "caught up")
+            assertTrue(second.shows(TraceSnapshot.EMPTY, FeedStatus.FAILED), "a feed that is over has shown all it will")
+            runBlocking { withTimeout(10_000) { second.feed.status.first { it == FeedStatus.LIVE } } }
+            assertEquals("secret", connections.poll(10, TimeUnit.SECONDS), "the same JVM, from the first byte")
+
+            app.close()
+            assertEquals("hung up", connections.poll(10, TimeUnit.SECONDS))
+        }
     }
 
     @Test
     fun aFrameOpensInTheIdeIfItIsProjectCodeAndSaysSoIfItIsNot() {
         val source = File(temp, "app/src/Main.kt").apply { parentFile.mkdirs(); writeText("fun main() {}") }
         val marker = File(temp, "opened.txt")
-        val app = AppState(scope, IdeOpener("/bin/sh -c 'echo \"$1:$2\" > \"$0\"' ${marker.path} {path} {line}"), initialDir = null)
+        val app = AppState(scope, IdeOpener("/bin/sh -c 'echo \"$1:$2\" > \"$0\"' ${marker.path} {path} {line}"), SessionRegistry(temp))
         val projectFrame = StackFrameDef(1, "demo.MainKt", "main", "Main.kt", 3)
         val libraryFrame = StackFrameDef(2, "kotlinx.coroutines.BuildersKt", "launch", "Builders.kt", 1)
 

@@ -10,15 +10,17 @@ import java.io.InputStream
 import java.io.OutputStream
 
 /**
- * Byte-level layout shared by trace files and the live stream:
- * the 8 bytes of [MAGIC], then frames, each a base-128 varint length followed by that many bytes of a [Frame] message.
+ * Trace files and live streams have the same layout:
+ *
+ * 1. The 8 bytes of [MAGIC].
+ * 2. For each [Frame], its byte length as a base-128 varint, then its encoded bytes.
  */
 public object TraceFormat {
     public val MAGIC: ByteArray = "COROTREE".toByteArray(Charsets.US_ASCII)
 
     public const val FILE_EXTENSION: String = "ctrace"
 
-    /** Upper bound for a single frame; anything larger means the stream is corrupt. */
+    /** Maximum frame size in bytes. Larger frames mean the stream is corrupt. */
     public const val MAX_FRAME_SIZE: Int = 64 * 1024 * 1024
 
     internal val protoBuf: ProtoBuf = ProtoBuf
@@ -48,8 +50,7 @@ public class TraceWriter(private val out: OutputStream) : Closeable {
 }
 
 /**
- * Reads frames until the stream ends. A trace is append-only and its producer may die at any moment, so a frame
- * that is cut short at the end of the stream ends the trace normally instead of failing it.
+ * Reads frames until the stream ends. An incomplete final frame ends the trace without an error.
  */
 public class TraceReader(input: InputStream) : Closeable {
     private val input = DataInputStream(input as? BufferedInputStream ?: BufferedInputStream(input))

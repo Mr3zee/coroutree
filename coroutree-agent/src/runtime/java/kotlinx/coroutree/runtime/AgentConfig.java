@@ -11,24 +11,28 @@ import java.util.List;
 import java.util.Properties;
 
 /**
- * Agent options. They come either inline, {@code -javaagent:agent.jar=key=value,key=value}, or, the way the
- * Gradle plugin passes them, from a properties file: {@code -javaagent:agent.jar=config=/path/agent.properties}.
- * Inline options override the file; to combine the two, put {@code config=} anywhere but first.
+ * Inline options use {@code -javaagent:agent.jar=key=value,key=value}.
+ * A properties file uses {@code -javaagent:agent.jar=config=/path/agent.properties}.
+ * Inline options override the file. To combine them, put {@code config=} after another option.
  */
 public final class AgentConfig {
-    /** Directory for the trace file; the agent names the file itself because only it knows the pid. */
     public final String traceDir;
-    /** Exact trace file; overrides {@link #traceDir}. */
+    /** Overrides {@link #traceDir}. */
     public final String traceFile;
-    /** Directory for the live session descriptor. Empty: no descriptor is written. */
+    /**
+     * Defaults to the shared user registry at {@code ~/.coroutree/sessions}. Empty disables session descriptors.
+     */
     public final String sessionsDir;
     public final boolean live;
-    /** Report threads blocked on {@code synchronized}, which takes a native library (see MonitorProbe). */
+    /** Requires the native library loaded by MonitorProbe. */
     public final boolean monitor;
     /**
-     * Execution control (DESIGN §3.1). {@code pace=false}: no gate in this JVM at all. {@code pace.paused}: held at the
-     * first event until a GUI resumes or steps; needs {@link #live}. {@code pace.events.per.second}: the pace the run
-     * starts with and falls back to, per sequence, a decimal number or {@code unlimited}; here as the interval it means.
+     * Execution-control options (DESIGN §3.1):
+     * <ul>
+     * <li>{@code pace=false} removes the gate.</li>
+     * <li>{@code pace.paused} holds the first event until a GUI resumes or steps. Requires {@link #live}.</li>
+     * <li>{@code pace.events.per.second} sets the initial and fallback pace for each sequence, stored here as nanoseconds between steps.</li>
+     * </ul>
      */
     public final boolean pace;
     public final boolean pacePaused;
@@ -40,13 +44,13 @@ public final class AgentConfig {
     public final List<String> excludePackages;
     public final int stackDepth;
     public final List<SourceIndexFile.Module> sourceIndex;
-    /** Problems found while reading the options, to be reported once tracing is up. */
+    /** Report after tracing starts. */
     public final List<String> problems = new ArrayList<>();
 
     private AgentConfig(Properties p) {
         traceDir = p.getProperty("trace.dir", "");
         traceFile = p.getProperty("trace.file", "");
-        sessionsDir = p.getProperty("sessions.dir", "");
+        sessionsDir = p.getProperty("sessions.dir", defaultSessionsDir());
         live = Boolean.parseBoolean(p.getProperty("live", "true"));
         monitor = Boolean.parseBoolean(p.getProperty("monitor", "true"));
         buildId = p.getProperty("build.id", "");
@@ -60,16 +64,17 @@ public final class AgentConfig {
         paceIntervalNanos = pace ? intervalOf(p.getProperty("pace.events.per.second")) : 0;
         boolean paused = pace && Boolean.parseBoolean(p.getProperty("pace.paused", "false"));
         if (paused && !live) {
-            problems.add("Ignored pace.paused: without the live socket (live=false) nothing could ever resume the program, so it runs");
+            problems.add("Ignored pace.paused: with live=false no GUI can resume the program, so it runs.");
             paused = false;
         }
         pacePaused = paused;
     }
 
-    /**
-     * Whether this JVM has a gate. Without the live socket nobody can ever send a command, and then there is one only
-     * for a pace that was configured.
-     */
+    /** Must match SessionRegistry.defaultDir in the GUI. */
+    public static String defaultSessionsDir() {
+        return new File(System.getProperty("user.home", "."), ".coroutree/sessions").getPath();
+    }
+
     public boolean hasGate() {
         return pace && (live || paceIntervalNanos > 0);
     }
@@ -86,7 +91,7 @@ public final class AgentConfig {
             }
         } catch (NumberFormatException ignored) {
         }
-        problems.add("Ignored pace.events.per.second=" + eventsPerSecond + ", expected a positive number or 'unlimited': the program runs unpaced");
+        problems.add("Ignored pace.events.per.second=" + eventsPerSecond + ": expected a positive number or 'unlimited'. The program runs unpaced.");
         return 0;
     }
 
@@ -94,18 +99,18 @@ public final class AgentConfig {
         Properties inline = new Properties();
         List<String> problems = new ArrayList<>();
         if (agentArgs != null && agentArgs.startsWith("config=")) {
-            // The form the Gradle plugin uses: nothing but the file. Taken whole, because a path may contain a comma.
+            // A leading config= consumes the whole argument because file paths can contain commas.
             inline.setProperty("config", agentArgs.substring("config=".length()));
         } else if (agentArgs != null && !agentArgs.isEmpty()) {
             for (String option : agentArgs.split(",")) {
                 int eq = option.indexOf('=');
                 if (eq <= 0) {
-                    problems.add("Ignored malformed agent option '" + option + "', expected key=value");
+                    problems.add("Ignored agent option '" + option + "': expected key=value.");
                     continue;
                 }
                 String key = option.substring(0, eq).trim();
                 String value = option.substring(eq + 1).trim();
-                // include/exclude are lists themselves; inline they are separated with ';' or ':'
+                // Inline include/exclude lists use semicolons or colons because commas separate options.
                 if (key.equals("include") || key.equals("exclude")) value = value.replace(';', ',').replace(':', ',');
                 inline.setProperty(key, value);
             }
@@ -116,7 +121,7 @@ public final class AgentConfig {
             try (Reader reader = new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8)) {
                 merged.load(reader);
             } catch (IOException e) {
-                problems.add("Cannot read agent config " + file + ": " + e);
+                problems.add("Can't read the agent config " + file + ": " + e);
             }
         }
         merged.putAll(inline);
@@ -125,7 +130,6 @@ public final class AgentConfig {
         return config;
     }
 
-    /** Where the trace goes: the explicit file, or a generated name in the trace directory (the working directory by default). */
     public File resolveTraceFile(long pid) {
         if (!traceFile.isEmpty()) return new File(traceFile).getAbsoluteFile();
         String label = taskPath.isEmpty() ? "trace" : taskPath.replaceAll("[^A-Za-z0-9._-]+", "-").replaceAll("^-+|-+$", "");
@@ -140,7 +144,6 @@ public final class AgentConfig {
         return false;
     }
 
-    /** Whether project classes are told apart from libraries at all. Without it, instrumenting "project code" would mean everything. */
     public boolean hasProjectPackages() {
         return !includePackages.isEmpty();
     }
@@ -171,7 +174,7 @@ public final class AgentConfig {
             if (parsed > 0) return parsed;
         } catch (NumberFormatException ignored) {
         }
-        problems.add("Ignored " + key + "=" + value + ", expected a positive integer");
+        problems.add("Ignored " + key + "=" + value + ": expected a positive integer.");
         return fallback;
     }
 
@@ -180,7 +183,7 @@ public final class AgentConfig {
         try {
             return SourceIndexFile.read(new File(path));
         } catch (IOException e) {
-            problems.add("Cannot read source index " + path + ": " + e);
+            problems.add("Can't read the source index " + path + ": " + e);
             return List.of();
         }
     }

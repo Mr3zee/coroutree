@@ -1,7 +1,8 @@
 package kotlinx.coroutree.gui
 
-import kotlinx.coroutree.gui.source.CoroutreeDir
 import kotlinx.coroutree.gui.source.SessionInfo
+import kotlinx.coroutree.gui.source.SessionRegistry
+import kotlinx.coroutree.gui.source.SessionState
 import kotlinx.coroutree.gui.source.TraceSource
 import java.io.File
 import java.net.InetAddress
@@ -19,19 +20,25 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Finding what to open in a build's coroutree directory when what is in it is not tidy: descriptors of other agent
- * versions, sessions whose JVM crashed and left the file saying "running", files that are not where they belong.
+ * Finding what to open in the registry when what is in it is not tidy: descriptors of other agent versions, sessions
+ * whose JVM crashed and left the file saying "running", pids given out again, files that are not where they belong.
  */
 class SessionDiscoveryTest {
     private val dir: File = Files.createTempDirectory("coroutree-discovery").toFile()
+    private val registry = SessionRegistry(dir)
 
     @AfterTest
     fun tearDown() {
         dir.deleteRecursively()
     }
 
-    private fun session(pid: Long, startedAt: Long, port: Int, ended: Boolean = false) =
-        """{"pid":$pid,"port":$port,"token":"t$pid","traceFile":"${File(dir, "traces/b/$pid.ctrace").path.replace("\\", "\\\\")}","taskPath":":run","buildId":"b","command":"Main","startedAt":$startedAt,"ended":$ended}"""
+    private val ownPid = ProcessHandle.current().pid()
+
+    /** A pid that no process has: the largest the platform allows, or near it. */
+    private val nobodysPid = generateSequence(4_000_000L) { it + 1 }.first { ProcessHandle.of(it).isEmpty }
+
+    private fun session(pid: Long, startedAt: Long, port: Int, ended: Boolean = false, trace: String = "traces/$pid.ctrace") =
+        """{"pid":$pid,"port":$port,"token":"t$pid","traceFile":"${File(dir, trace).path.replace("\\", "\\\\")}","taskPath":":run","buildId":"b","command":"Main","startedAt":$startedAt,"ended":$ended}"""
 
     private fun write(path: String, text: String): File = File(dir, path).apply { parentFile.mkdirs(); writeText(text) }
 
@@ -50,6 +57,8 @@ class SessionDiscoveryTest {
         // Keys of the wrong type are as good as missing; they do not take the listing down.
         val odd = SessionInfo.parse("""{"pid":"7","port":null,"token":12,"traceFile":false,"ended":"true","paceable":1,"startedAt":1.0e3}""")
         assertEquals(SessionInfo(null, 0, 0, "", null, "", "", "", startedAt = 1000, ended = false, paceable = false), odd)
+        assertFalse(odd.live, "no port: a run without a socket")
+        assertTrue(old.live)
     }
 
     @Test
@@ -65,49 +74,41 @@ class SessionDiscoveryTest {
 
     @Test
     fun onlyFilesWhereTheAgentPutsThemAreListed() {
-        write("sessions/b1/1.json", session(1, 100, 1))
-        write("sessions/2.json", session(2, 200, 1)) // not in a build's directory
-        write("sessions/b1/deeper/3.json", session(3, 300, 1))
-        write("sessions/b1/4.json.tmp", session(4, 400, 1)) // still being written under another name
-        File(dir, "sessions/b1/5.json").mkdirs() // a directory that looks like a file
-        write("sessions/b1/6.json", "") // created, not yet written
-        write("traces/b1/a.ctrace", "x")
-        write("traces/a.ctrace", "x")
-        write("traces/b1/deeper/b.ctrace", "x")
-        write("traces/b1/c.ctrace.part", "x")
-        File(dir, "traces/b1/d.ctrace").mkdirs()
+        write("1.json", session(1, 100, 1))
+        write("deeper/3.json", session(3, 300, 1))
+        write("4.json.tmp", session(4, 400, 1)) // still being written under another name
+        File(dir, "5.json").mkdirs() // a directory that looks like a file
+        write("6.json", "") // created, not yet written
 
-        val coroutreeDir = CoroutreeDir(dir)
-        assertEquals(listOf(1L), coroutreeDir.sessions().map { it.pid })
-        assertEquals(File(dir, "sessions/b1/1.json"), coroutreeDir.sessions().single().file, "a session remembers its file")
-        assertEquals(listOf(File(dir, "traces/b1/a.ctrace")), coroutreeDir.traces())
+        assertEquals(listOf(1L), registry.sessions().map { it.pid })
+        assertEquals(File(dir, "1.json"), registry.sessions().single().file, "a session remembers its file")
     }
 
     @Test
     fun aDirectoryWithNothingInItOrThatIsNotThereOffersNothing() {
         for (empty in listOf(dir, File(dir, "missing"), write("a-file", "x"))) {
-            val coroutreeDir = CoroutreeDir(empty)
-            assertEquals(emptyList(), coroutreeDir.sessions())
-            assertEquals(emptyList(), coroutreeDir.traces())
-            assertNull(coroutreeDir.latest())
+            val registry = SessionRegistry(empty)
+            assertEquals(emptyList(), registry.sessions())
+            assertEquals(emptyList(), registry.entries())
+            assertNull(registry.latest())
+            assertEquals(0, registry.prune())
         }
     }
 
     @Test
-    fun sessionsOfAllBuildsAreListedTogetherNewestFirst() {
-        write("sessions/b1/1.json", session(1, 300, 1))
-        write("sessions/b2/2.json", session(2, 500, 1, ended = true))
-        write("sessions/b3/3.json", session(3, 100, 1))
-        write("sessions/b1/4.json", session(4, 400, 1))
-        assertEquals(listOf(2L, 4L, 1L, 3L), CoroutreeDir(dir).sessions().map { it.pid })
+    fun sessionsAreListedNewestFirstWhateverTheyAre() {
+        write("1.json", session(1, 300, 1))
+        write("2.json", session(2, 500, 1, ended = true))
+        write("3.json", session(3, 100, 1))
+        write("4.json", session(4, 400, 1))
+        assertEquals(listOf(2L, 4L, 1L, 3L), registry.sessions().map { it.pid })
     }
 
-    // ------------------------------------------------------------------ --open-latest
+    // ------------------------------------------------------------------ running, ended, crashed
 
     /** "A crashed JVM leaves a session file that still says 'running'; only a connection tells." */
     @Test
-    fun latestTellsALiveSessionFromACrashedOneByConnecting() {
-        val trace = write("traces/b/run.ctrace", "x")
+    fun aSessionRunsIfItsJvmIsAliveAndItsSocketAnswers() {
         val probes = LinkedBlockingQueue<Int>()
         ServerSocket(0, 5, InetAddress.getLoopbackAddress()).use { server ->
             thread(isDaemon = true) {
@@ -115,34 +116,83 @@ class SessionDiscoveryTest {
                     while (true) server.accept().use { probes += it.getInputStream().read() }
                 }
             }
-            write("sessions/b/crashed.json", session(1, 300, deadPort()))
-            write("sessions/b/alive.json", session(2, 200, server.localPort))
-            write("sessions/b/older.json", session(3, 100, server.localPort))
-            write("sessions/b/ended.json", session(4, 400, server.localPort, ended = true))
+            val now = System.currentTimeMillis()
+            write("alive.json", session(ownPid, now, server.localPort))
+            write("gone.json", session(nobodysPid, now - 1, server.localPort)) // the port answers, but it is somebody else's now
+            write("hung-up.json", session(ownPid, now - 2, deadPort())) // the JVM lives, the agent's socket is closed: shutting down, or worse
+            write("ended.json", session(ownPid, now - 3, server.localPort, ended = true))
+            write("silent.json", session(ownPid, now - 4, 0)) // started with live=false: running, nothing to connect to
 
-            val latest = assertIs<TraceSource.Session>(CoroutreeDir(dir).latest(), "the newest session that answers")
-            assertEquals(2L, latest.info.pid)
+            val entries = registry.entries()
+            assertEquals(listOf("alive", "gone", "hung-up", "ended", "silent"), entries.map { it.info.file!!.nameWithoutExtension }, "newest first")
+            assertEquals(listOf(SessionState.RUNNING, SessionState.CRASHED, SessionState.UNREACHABLE, SessionState.ENDED, SessionState.RUNNING), entries.map { it.state })
             assertEquals(-1, probes.poll(10, TimeUnit.SECONDS), "the probe hangs up without a word: it does not authenticate, the agent starts no replay")
-            assertNull(probes.poll(), "one probe: the ended session is never tried, nor anything older than the one that answered")
+            assertNull(probes.poll(100, TimeUnit.MILLISECONDS), "one probe: a dead JVM's port is never tried, nor an ended session's, nor a session without one")
+
+            val latest = assertIs<TraceSource.Session>(registry.latest(), "the newest session that runs")
+            assertEquals(server.localPort, latest.info.port)
         }
-        // The same directory once that JVM is gone too.
-        assertEquals(TraceSource.TraceFile(trace), CoroutreeDir(dir).latest(), "nobody answers: the newest trace")
     }
 
     @Test
-    fun withoutASessionThatAnswersLatestIsTheNewestTrace() {
-        val older = write("traces/b1/old.ctrace", "x").apply { setLastModified(1_000_000_000) }
-        val newer = write("traces/b2/new.ctrace", "x").apply { setLastModified(2_000_000_000) }
-        write("sessions/b1/1.json", session(1, 100, deadPort()))
-        val coroutreeDir = CoroutreeDir(dir)
-        assertEquals(TraceSource.TraceFile(newer), coroutreeDir.latest())
-        assertEquals("new.ctrace", coroutreeDir.latest()?.title)
-        assertEquals(listOf(newer, older), coroutreeDir.traces(), "across builds")
+    fun aPidGivenOutAgainIsNotTheJvmOfTheDescriptor() {
+        val processStart = ProcessHandle.current().info().startInstant().map { it.toEpochMilli() }.orElse(0L)
+        val mine = SessionInfo.parse(session(ownPid, System.currentTimeMillis(), 1))
+        assertTrue(SessionRegistry.isAlive(mine))
+        assertTrue(SessionRegistry.isAlive(mine.copy(startedAt = 0)), "an agent that did not say when: believed")
+        if (processStart > 0) {
+            assertFalse(SessionRegistry.isAlive(mine.copy(startedAt = processStart - 3_600_000)), "a JVM that started an hour after the descriptor was written is another one")
+            assertFalse(SessionRegistry.isAlive(mine.copy(startedAt = processStart + 3_600_000)), "a JVM that started an hour before the agent took the time is another one too")
+        }
+        assertFalse(SessionRegistry.isAlive(mine.copy(pid = nobodysPid)))
+    }
 
-        newer.delete()
-        older.delete()
-        assertNull(coroutreeDir.latest(), "a crashed session and no trace: nothing to open")
-        assertFalse(CoroutreeDir.isReachable(coroutreeDir.sessions().single()))
-        assertTrue(coroutreeDir.sessions().none { it.ended }, "the file still says it runs")
+    @Test
+    fun latestFallsBackToTheNewestRunWhoseTraceIsThere() {
+        write("1.json", session(1, 100, 1, trace = "traces/old.ctrace"))
+        write("2.json", session(2, 200, 1, ended = true, trace = "traces/new.ctrace"))
+        write("3.json", session(3, 300, 1, ended = true, trace = "traces/gone.ctrace"))
+        write("traces/old.ctrace", "x")
+        write("traces/new.ctrace", "x")
+        val latest = assertIs<TraceSource.Session>(registry.latest(reachable = { false }))
+        assertEquals(2L, latest.info.pid, "the newest with a trace; 3's trace is gone, 1 crashed and is older")
+        assertEquals("new.ctrace", latest.info.traceFile?.name)
+        File(dir, "traces").deleteRecursively()
+        assertNull(registry.latest(reachable = { false }), "nothing to open")
+    }
+
+    @Test
+    fun withoutAnyJvmAnsweringNothingRuns() {
+        write("1.json", session(nobodysPid, 100, deadPort()))
+        assertEquals(listOf(SessionState.CRASHED), registry.entries().map { it.state })
+        assertTrue(registry.sessions().none { it.ended }, "the file still says it runs")
+        assertFalse(registry.entries().single().openable, "and the trace file is not there either")
+    }
+
+    // ------------------------------------------------------------------ pruning
+
+    @Test
+    fun pruningForgetsRunsWithoutATraceAndAllButTheNewestFew() {
+        val now = System.currentTimeMillis()
+        write("running.json", session(ownPid, now, 1))
+        write("running-no-trace.json", session(ownPid, now - 1, 1, trace = "traces/not-yet.ctrace"))
+        write("unreachable.json", session(ownPid, now - 2, 1, trace = "traces/unreachable.ctrace"))
+        write("traces/unreachable.ctrace", "x")
+        for (i in 1..5) {
+            write("ended-$i.json", session(100L + i, 100L + i, 1, ended = true, trace = "traces/$i.ctrace"))
+            write("traces/$i.ctrace", "x")
+        }
+        write("ended-no-trace.json", session(200, 200, 1, ended = true, trace = "traces/cleaned.ctrace"))
+        write("crashed.json", session(nobodysPid, 50, 1, trace = "traces/crashed.ctrace"))
+        write("traces/crashed.ctrace", "x")
+
+        val reachable = { info: SessionInfo -> info.file?.name != "unreachable.json" }
+        assertEquals(4, registry.prune(keep = 3, reachable))
+        assertEquals(
+            setOf("running.json", "running-no-trace.json", "unreachable.json", "ended-5.json", "ended-4.json", "ended-3.json"),
+            dir.listFiles()!!.filter { it.isFile }.map { it.name }.toSet(),
+            "a JVM that exists is never touched, whatever its trace or socket; of the rest the three newest with a trace stay",
+        )
+        assertEquals(0, registry.prune(keep = 3, reachable), "nothing more to forget")
     }
 }

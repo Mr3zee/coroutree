@@ -1,11 +1,7 @@
 package kotlinx.coroutree.gradle
 
 internal object HostPlatform {
-    /**
-     * Where in the agent jar the native monitor probe for this machine is, `null` for a platform it is not built for.
-     * The names are the agent's (MonitorProbeLoader in coroutree-agent), repeated here because the plugin shares
-     * no code with it.
-     */
+    /** Entry paths must match MonitorProbeLoader in coroutree-agent. */
     fun monitorProbeEntry(
         osName: String = System.getProperty("os.name"),
         osArch: String = System.getProperty("os.arch"),

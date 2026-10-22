@@ -65,7 +65,7 @@ class AgentRobustnessTest {
         val trace = File(dir, "trace.ctrace")
         val process = ProcessBuilder(
             TestEnvironment.java,
-            "-javaagent:${TestEnvironment.agentJar}=trace.file=$trace,live=false,include=samples,nonsense,pace.events.per.second=fast," +
+            "-javaagent:${TestEnvironment.agentJar}=trace.file=$trace,sessions.dir=$dir/sessions,live=false,include=samples,nonsense,pace.events.per.second=fast," +
                 "stack.depth=-3,config=${File(dir, "no-such.properties")}",
             "-cp", TestEnvironment.samplesClasspath, "samples.StructuredConcurrencyKt",
         ).directory(dir).redirectErrorStream(true).redirectOutput(File(dir, "output.txt")).start()

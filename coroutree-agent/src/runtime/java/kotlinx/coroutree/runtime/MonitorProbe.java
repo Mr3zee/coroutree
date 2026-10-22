@@ -33,6 +33,6 @@ public final class MonitorProbe {
      */
     public static void loadAndConnect(String libraryPath) {
         System.load(libraryPath);
-        if (!enable(Hooks.class)) throw new IllegalStateException("the JVM does not provide monitor events");
+        if (!enable(Hooks.class)) throw new IllegalStateException("the JVM has no monitor events");
     }
 }

@@ -57,6 +57,10 @@ fun TraceScreen(
     failure: String?,
     onOpenFrame: (StackFrameDef) -> Unit,
     onClose: () -> Unit,
+    /** Hang up on the JVM the trace comes from; `null` while there is none on the line. */
+    onDisconnect: (() -> Unit)? = null,
+    /** Pick the JVM up again after a hang-up; `null` unless that is where the trace stands. */
+    onReconnect: (() -> Unit)? = null,
 ) {
     // Space and → control the program while there is one to control. The window hands keys over as well (Main); this
     // is for whoever has clicked into the panes.
@@ -67,12 +71,12 @@ fun TraceScreen(
             .focusRequester(focus).focusable()
             .onPreviewKeyEvent { event -> controlKeyOf(event)?.let(viewModel::handleKey) ?: false },
     ) {
-        TopBar(viewModel.snapshot.header, sourceTitle, status, paused = viewModel.paceable && viewModel.globalPace?.paused == true, onClose)
+        TopBar(viewModel.snapshot.header, sourceTitle, status, paused = viewModel.paceable && viewModel.globalPace?.paused == true, onClose, onDisconnect, onReconnect)
         Divider()
         PaceBar(viewModel)
-        if (failure != null) Banner("Could not read the trace: $failure", palette.failed, onDismiss = null)
+        if (failure != null) Banner("Can't read the trace: $failure", palette.failed, onDismiss = null)
         if (viewModel.paceable && viewModel.pausedAtStart) {
-            Banner("Paused at start — resume or step. The program is held at its first event.", palette.suspended, onDismiss = null, tag = "paused-at-start")
+            Banner("Paused at start: the program is held at its first event. Resume or step it.", palette.suspended, onDismiss = null, tag = "paused-at-start")
         }
         DiagnosticBanners(viewModel.snapshot.diagnostics)
 
@@ -107,7 +111,15 @@ private fun SplitPaneScope.paneSplitter(vertical: Boolean) {
 }
 
 @Composable
-private fun TopBar(header: TraceHeader?, sourceTitle: String, status: FeedStatus, paused: Boolean, onClose: () -> Unit) {
+private fun TopBar(
+    header: TraceHeader?,
+    sourceTitle: String,
+    status: FeedStatus,
+    paused: Boolean,
+    onClose: () -> Unit,
+    onDisconnect: (() -> Unit)?,
+    onReconnect: (() -> Unit)?,
+) {
     Row(
         Modifier.fillMaxWidth().height(40.dp).background(palette.header).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -126,7 +138,9 @@ private fun TopBar(header: TraceHeader?, sourceTitle: String, status: FeedStatus
                 if (header.jvm.javaVersion.isNotEmpty()) Chip("java ${header.jvm.javaVersion}")
             }
         }
-        TextButton("Open…", onClose, Modifier.testTag("open-another"))
+        if (onDisconnect != null) TextButton("Disconnect", onDisconnect, Modifier.testTag("disconnect"))
+        if (onReconnect != null) TextButton("Reconnect", onReconnect, Modifier.testTag("reconnect"), primary = true)
+        TextButton("Sessions", onClose, Modifier.testTag("open-another"))
     }
 }
 
@@ -134,8 +148,8 @@ private fun TopBar(header: TraceHeader?, sourceTitle: String, status: FeedStatus
 private fun StatusPill(status: FeedStatus) {
     val color = when (status) {
         FeedStatus.LIVE -> palette.active
-        FeedStatus.CONNECTING, FeedStatus.LOADING -> palette.suspended
-        FeedStatus.RECORDED, FeedStatus.ENDED -> palette.finished
+        FeedStatus.CONNECTING, FeedStatus.LOADING, FeedStatus.PARTIAL -> palette.suspended
+        FeedStatus.RECORDED, FeedStatus.ENDED, FeedStatus.DISCONNECTED -> palette.finished
         FeedStatus.FAILED -> palette.failed
     }
     Row(

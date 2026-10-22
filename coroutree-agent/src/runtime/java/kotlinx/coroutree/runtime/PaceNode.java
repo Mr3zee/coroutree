@@ -3,23 +3,20 @@ package kotlinx.coroutree.runtime;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * What the gate ({@link Pace}) needs of a runtime node: where it hangs in the structure, so that a setting on a node
- * holds for its subtree, and when the last step happened to it, so that the next one keeps its distance.
- * Without a gate none of it exists: no link is set, no time is kept, the node is not registered anywhere.
+ * Without a gate, nodes have no pacing ancestry, timestamp storage, or registry entry.
  */
 abstract class PaceNode {
     final long id;
 
     /**
-     * Runtime node of the structural parent: ours, never the application's object. {@code null} for a root, for a
-     * node whose definition has not been seen yet, and always without a gate.
+     * Null for roots, undefined nodes, and nodes without a gate. Must reference only runtime nodes, never application objects.
      */
     volatile PaceNode paceParent;
 
-    /** The setting this node carries for its subtree, {@code null} while it goes by its parent's. Written under the gate's command lock. */
+    /** Null means inherited. Writes require the gate's command lock. */
     volatile PaceScope scope;
 
-    /** When the last step happened to this node (and, for a flow, was made by it), {@link Pace#NEVER} before the first. */
+    /** Last step on this node or from this flow. {@link Pace#NEVER} before the first step, null without a gate. */
     final AtomicLong lastStep;
 
     PaceNode(long id) {
@@ -30,13 +27,12 @@ abstract class PaceNode {
     }
 
     /**
-     * The line of execution this node's code is part of: itself, unless it runs in place of a caller that waits for it
-     * (a scope, a context change, runBlocking), in which case it is the caller's.
+     * Scopes, context changes, and runBlocking share the flow of the caller that waits for them.
      */
     PaceNode flow() {
         return this;
     }
 
-    /** A node that has ended takes no setting and keeps none. */
+    /** Finished nodes can't have local settings. */
     abstract boolean isFinished();
 }

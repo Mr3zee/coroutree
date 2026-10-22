@@ -13,13 +13,16 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.UntrackedTask
 import java.io.File
 
-/** Starts the GUI on what the build has recorded so far and returns; the GUI keeps running after the build. */
+/**
+ * Starts the standalone GUI and returns immediately. The GUI continues after the build ends.
+ * It lists traced JVMs from all builds.
+ */
 @UntrackedTask(because = "Launches an application")
 public abstract class CoroutreeViewTask : DefaultTask() {
     @get:Classpath
     public abstract val guiClasspath: ConfigurableFileCollection
 
-    /** `<root build dir>/coroutree`: traces, live sessions, and the GUI's log. */
+    /** `<root build dir>/coroutree`: traces, and the GUI's log. */
     @get:Internal
     public abstract val dataDirectory: Property<String>
 
@@ -27,18 +30,17 @@ public abstract class CoroutreeViewTask : DefaultTask() {
     @get:Optional
     public abstract val ideCommand: Property<String>
 
-    /** Print the command line instead of running it. `-Pcoroutree.view.dryRun` */
+    /** Whether to print the command without execution. Set with `-Pcoroutree.view.dryRun`. Default is false. */
     @get:Input
     public abstract val dryRun: Property<Boolean>
 
-    /** See [AgentArgumentProvider.buildIdService] for the loose type. */
     @get:Internal
     public abstract val buildIdService: Property<BuildService<*>>
 
     @TaskAction
     protected fun launch() {
         val files = guiClasspath.files
-        if (files.isEmpty()) throw GradleException("The '${CoroutreePlugin.GUI_CONFIGURATION}' configuration is empty: nothing to launch")
+        if (files.isEmpty()) throw GradleException("The '${CoroutreePlugin.GUI_CONFIGURATION}' configuration is empty. Add the coroutree GUI to it.")
         val dataDir = File(dataDirectory.get())
 
         val executable = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "javaw.exe" else "java"
@@ -47,9 +49,6 @@ public abstract class CoroutreeViewTask : DefaultTask() {
             add("-cp")
             add(files.joinToString(File.pathSeparator) { it.absolutePath })
             add(CoroutreePlugin.GUI_MAIN_CLASS)
-            add("--dir")
-            add(dataDir.absolutePath)
-            add("--open-latest")
             ideCommand.orNull?.let {
                 add("--ide")
                 add(it)
@@ -57,19 +56,18 @@ public abstract class CoroutreeViewTask : DefaultTask() {
         }
 
         if (dryRun.get()) {
-            // One argument per line: arguments contain spaces, and tests want them back intact.
+            // One argument on each line lets tests read arguments that contain spaces.
             logger.quiet("coroutreeView command line:")
             command.forEach { logger.quiet("  $it") }
             return
         }
 
         dataDir.mkdirs()
-        // Every project that applies the plugin has this task, so `gradlew coroutreeView` from the root runs them all.
-        // They all mean the same GUI on the same directory: the first one of an invocation opens it.
+        // A root invocation can run this task in several projects. Only the first task starts a GUI.
         val buildId = BuildIdService.idOf(buildIdService.get())
         dataDir.listFiles { file -> file.name.startsWith(LAUNCH_MARKER_PREFIX) && file.name != LAUNCH_MARKER_PREFIX + buildId }?.forEach { it.delete() }
         if (!File(dataDir, LAUNCH_MARKER_PREFIX + buildId).createNewFile()) {
-            logger.info("coroutree GUI was already started by another project of this build")
+            logger.info("coroutree: another project of this build already started the GUI")
             return
         }
         val log = File(dataDir, "gui.log")
@@ -78,7 +76,7 @@ public abstract class CoroutreeViewTask : DefaultTask() {
             .redirectErrorStream(true)
             .redirectOutput(ProcessBuilder.Redirect.appendTo(log))
             .start()
-        logger.lifecycle("coroutree GUI started; its output goes to ${log.absolutePath}")
+        logger.lifecycle("coroutree GUI started. Its output goes to ${log.absolutePath}")
     }
 
     private companion object {

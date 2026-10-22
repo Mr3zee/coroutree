@@ -5,7 +5,6 @@ import java.util.Iterator;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
-/** Captures the current JVM stack and reads the source site and the source construct off it. */
 final class StackCapture {
     private static final String RUNTIME_PACKAGE = "kotlinx.coroutree.runtime.";
     private static final StackWalker WALKER = StackWalker.getInstance();
@@ -34,8 +33,7 @@ final class StackCapture {
     }
 
     /**
-     * A stack for finding the source site of a new node. The site is a fact about the node, not a detail of the
-     * recorded stack, so how far down it may be looked for does not depend on the configured stack depth.
+     * Source-site lookup must not depend on the configured event stack depth.
      */
     static StackFrameRef[] captureForSite() {
         return capture(Math.max(Tracer.config.stackDepth, SITE_SEARCH_DEPTH));
@@ -50,8 +48,8 @@ final class StackCapture {
     }
 
     /**
-     * Index of the source site in {@code stack}: the innermost frame that is not part of a concurrency runtime
-     * (the JDK, the Kotlin standard library, kotlinx.coroutines). -1 if the whole stack is runtime.
+     * Index of the innermost frame outside the JDK, Kotlin standard library, and kotlinx.coroutines.
+     * Returns -1 if all frames belong to those runtimes.
      */
     static int siteIndex(StackFrameRef[] stack) {
         for (int i = 0; i < stack.length; i++) {
@@ -61,12 +59,11 @@ final class StackCapture {
     }
 
     /**
-     * Name of the construct that created a node: the API function the site frame called, i.e. the frame just below
-     * the site. {@code launch}, {@code withContext}, {@code Job()}, {@code Thread.start}.
+     * The API frame just below the source site identifies the construct, such as launch or withContext.
      */
     static String construct(StackFrameRef[] stack, int siteIndex, String fallback) {
         int api = siteIndex < 0 ? stack.length - 1 : siteIndex - 1;
-        // A library's inline function between the site and the API it calls, if its name is not known, is no name to go by.
+        // Skip unnamed inline frames between the source site and the API.
         while (api >= 0 && stack[api].methodName.isEmpty()) api--;
         if (api < 0) return fallback;
         StackFrameRef frame = stack[api];
@@ -84,15 +81,14 @@ final class StackCapture {
         // Thread.ofVirtual().start(…) and friends, named the way they are written rather than after the builder's class.
         if (frame.className.startsWith("java.lang.ThreadBuilders$Virtual")) return "Thread.ofVirtual()." + method;
         if (frame.className.startsWith("java.lang.ThreadBuilders$Platform")) return "Thread.ofPlatform()." + method;
-        if (frame.className.equals("java.lang.VirtualThread")) return "Thread." + method; // an override; the call was Thread.start()
+        if (frame.className.equals("java.lang.VirtualThread")) return "Thread." + method; // source calls Thread.start(), which VirtualThread overrides
         String owner = frame.className.substring(frame.className.lastIndexOf('.') + 1);
         return owner + "." + method;
     }
 
     /**
-     * Whether the site started the thread on purpose: everything between it and {@code Thread.start} is a thread-starting
-     * API. Anything else in between — a static initializer, an executor, a timer — and the thread is somebody's
-     * side effect: the first virtual thread of a JVM, for one, also starts the JDK's "VirtualThread-unblocker".
+     * A project-created thread has only thread-starting APIs between its source site and Thread.start.
+     * Other intervening frames identify runtime side effects, such as the JDK's VirtualThread-unblocker.
      */
     static boolean startedDirectlyBySite(StackFrameRef[] stack, int siteIndex) {
         if (siteIndex <= 0) return false;

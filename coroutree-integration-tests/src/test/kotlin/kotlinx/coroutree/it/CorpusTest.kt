@@ -15,23 +15,19 @@ import kotlin.test.assertTrue
 
 /** Properties of the corpus as a whole, and of the agent across library versions. */
 class CorpusTest {
-    /**
-     * The corpus exists to exercise everything the agent can report. If a kind of event, node or link stops showing
-     * up in any sample, either the agent lost a hook or the corpus lost a case — both worth a red test.
-     */
     @Test
     fun corpusExercisesEverythingTheAgentReports() {
         val snapshots = GoldenTreeTest.SAMPLES.map { SampleRuns[it].snapshot }
         val events = snapshots.flatMap { it.events }
         val nodes = snapshots.flatMap { it.nodes.values }
 
-        // CANCELLATION_PROPAGATED child → parent is static-mode vocabulary: dynamically it is an EXCEPTION_PROPAGATED.
+        // The agent reports child-to-parent failure as EXCEPTION_PROPAGATED.
         assertEquals(EventKind.entries.toSet() - EventKind.UNSPECIFIED, events.map { it.kind }.toSet())
-        // IO is covered by LiveStreamTest; MONITOR takes the native probe, which a build has for its own platform at best.
+        // LiveStreamTest covers IO. MONITOR needs the native probe for the build platform.
         val unreported = setOfNotNull(BlockReason.UNSPECIFIED, BlockReason.IO, BlockReason.MONITOR.takeIf { MonitorProbeLibrary.file == null })
         assertEquals(BlockReason.entries.toSet() - unreported, events.map { it.blockReason }.toSet() - BlockReason.UNSPECIFIED)
         assertEquals(HandledBy.entries.toSet() - HandledBy.UNSPECIFIED, events.map { it.handledBy }.toSet() - HandledBy.UNSPECIFIED)
-        // TASK is M2 (executors, StructuredTaskScope).
+        // M3 adds executor TASK nodes. M6 adds StructuredTaskScope TASK nodes.
         assertEquals(NodeKind.entries.toSet() - setOf(NodeKind.UNSPECIFIED, NodeKind.TASK), nodes.map { it.info.kind }.toSet())
         assertTrue(nodes.map { it.state }.toSet().containsAll(setOf(NodeState.ACTIVE, NodeState.COMPLETED, NodeState.FAILED, NodeState.CANCELLED)))
         assertEquals(CrossLink.Kind.entries.toSet(), nodes.flatMap { it.links }.map { it.kind }.toSet())
@@ -46,7 +42,7 @@ class CorpusTest {
         }
     }
 
-    /** The hook table names library internals; see HookTable.TESTED_COROUTINES for the range this keeps honest. */
+    /** The hooks depend on library internals. HookTable.TESTED_COROUTINES defines the tested version range. */
     @TestFactory
     fun treesAreTheSameWithOlderCoroutines(): List<DynamicTest> =
         OTHER_VERSIONS.flatMap { version ->
@@ -59,9 +55,8 @@ class CorpusTest {
         }
 
     /**
-     * With assertions enabled — which is how Gradle runs tests — kotlinx.coroutines is in debug mode: it numbers
-     * coroutines through an extra context element and rethrows exceptions as copies with recovered stack traces.
-     * None of that is the program's doing, and none of it may show.
+     * Gradle enables assertions, which activates kotlinx.coroutines debug mode. It adds coroutine ids to the context
+     * and copies exceptions with recovered stacks. These library changes must stay out of the trace.
      */
     @TestFactory
     fun treesAreTheSameInCoroutinesDebugMode(): List<DynamicTest> =

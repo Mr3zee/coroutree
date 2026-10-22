@@ -55,35 +55,35 @@ public class NodeSnapshot internal constructor(
     public val links: List<CrossLink>,
     /** How the node's context differs from its structural parent's: its CONTEXT_CHANGED and DISPATCHER_CHANGED events, folded. */
     public val contextDiff: List<ContextChange>,
-    /** Node id of the thread this node runs on right now, 0 when it is not running (or is a thread itself). */
+    /** Current thread's node id, or 0 if this node isn't running or is itself a thread. */
     public val runsOn: Long,
-    /** The definition was never seen; the node exists only because something referred to its id. */
+    /** Whether the node exists only through an id reference, without a definition. */
     public val placeholder: Boolean,
 ) {
     public val id: Long get() = info.id
 }
 
-/** One setting of the gate: how far apart the steps of a sequence are kept, or that they are not let through at all. */
+/** The minimum step interval and pause state for one sequence. */
 public data class PaceSetting(
-    /** 0 = no limit. */
+    /** Minimum interval in nanoseconds. Default is 0 for no limit. */
     val intervalNanos: Long = 0,
     val paused: Boolean = false,
 ) {
-    /** Holds nobody. */
+    /** Whether this setting imposes no pause or pace limit. */
     public val isOpen: Boolean get() = !paused && intervalNanos == 0L
 }
 
 /**
- * The gate as the trace says it is: the settings as read back from the stream, not as somebody last asked for.
- * It says what is *set*; which threads are being held at this moment nobody outside the JVM knows.
+ * Execution-control settings confirmed by the trace stream. Pending commands aren't included.
+ * These settings don't identify which threads are held.
  */
 public data class PaceState(
-    /** `null`: the trace has said nothing about a gate (the JVM has none, or has not got to say). */
+    /** The global setting, or `null` if the trace has no execution-control settings yet. Default is `null`. */
     val global: PaceSetting? = null,
     /** Settings that nodes carry for their subtrees, by node id. */
     val nodes: Map<Long, PaceSetting> = emptyMap(),
 ) {
-    /** What governs [nodeId]: the innermost setting on its way to the root, else the global one. */
+    /** Returns the nearest setting on the path from [nodeId] to the root, or the global setting. */
     public fun governing(nodeId: Long, parentOf: (Long) -> Long?): PaceSetting? {
         var id: Long? = nodeId
         var hops = 0
@@ -109,7 +109,7 @@ public data class CrossLink(
     val seq: Long,
 ) {
     public enum class Kind {
-        /** `from` is the execution unit whose code created `to`, and it is not `to`'s structural parent. */
+        /** `from` is the execution unit whose code created `to`, and it isn't `to`'s structural parent. */
         LAUNCHED_FROM,
         CANCELS,
         INTERRUPTS,

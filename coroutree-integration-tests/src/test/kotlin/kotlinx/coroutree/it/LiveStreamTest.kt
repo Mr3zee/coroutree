@@ -10,6 +10,7 @@ import java.net.Socket
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -82,7 +83,11 @@ class LiveStreamTest {
             agentOptions = mapOf("live" to "false", "sessions.dir" to File(TestEnvironment.workDir, "LiveOff/sessions").path),
         )
         assertEquals(0, run.exitCode, run.output)
-        assertNull(File(TestEnvironment.workDir, "LiveOff/sessions").listFiles()?.firstOrNull(), "no session without live streaming")
+        val descriptor = File(TestEnvironment.workDir, "LiveOff/sessions").listFiles()?.singleOrNull()?.readText()
+        assertNotNull(descriptor, "the run is still on the GUI's list, as a recorded one")
+        assertFalse("\"port\"" in descriptor, descriptor)
+        assertEquals("true", descriptor.jsonValue("ended"))
+        assertEquals(run.traceFile.path, descriptor.jsonValue("traceFile").replace("\\\\", "\\"))
     }
 
     private fun <T : Any> awaitNotNull(what: String, timeoutMillis: Long = 30_000, probe: () -> T?): T {

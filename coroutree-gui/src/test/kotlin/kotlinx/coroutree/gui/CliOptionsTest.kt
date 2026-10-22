@@ -18,13 +18,12 @@ class CliOptionsTest {
             CliOptions(
                 trace = File("a.ctrace"),
                 session = File("s.json"),
-                dir = File("build/coroutree"),
-                openLatest = true,
+                sessionsDir = File("/tmp/sessions"),
                 ideCommand = "code -g {path}:{line}",
                 demo = CliOptions.DemoMode.LIVE,
             ),
             CliOptions.parse(
-                listOf("--trace", "a.ctrace", "--session", "s.json", "--dir", "build/coroutree", "--open-latest", "--ide", "code -g {path}:{line}", "--demo=live"),
+                listOf("--trace", "a.ctrace", "--session", "s.json", "--sessions", "/tmp/sessions", "--ide", "code -g {path}:{line}", "--demo=live"),
             ),
         )
         assertEquals(CliOptions.DemoMode.INSTANT, CliOptions.parse(listOf("--demo")).demo)
@@ -40,6 +39,7 @@ class CliOptionsTest {
         assertFailsWith<CliOptions.UsageException> { CliOptions.parse(listOf("--nope")) }
         assertFailsWith<CliOptions.UsageException> { CliOptions.parse(listOf("--trace")) }
         assertFailsWith<CliOptions.UsageException> { CliOptions.parse(listOf("--open-latest")) }
+        assertFailsWith<CliOptions.UsageException> { CliOptions.parse(listOf("--dir", "d")) }
         assertFailsWith<CliOptions.UsageException> { CliOptions.parse(listOf("a.ctrace", "b.ctrace")) }
     }
 
@@ -48,14 +48,14 @@ class CliOptionsTest {
         assertEquals(File("b.ctrace"), CliOptions.parse(listOf("--trace", "a.ctrace", "--trace", "b.ctrace")).trace)
         assertEquals(File("b.ctrace"), CliOptions.parse(listOf("a.ctrace", "--trace", "b.ctrace")).trace, "a bare path is a trace like any other")
         assertEquals(CliOptions.DemoMode.INSTANT, CliOptions.parse(listOf("--demo=live", "--demo")).demo)
-        assertEquals(CliOptions(dir = File("d"), openLatest = true), CliOptions.parse(listOf("--open-latest", "--dir", "d")), "in any order")
+        assertEquals(CliOptions(sessionsDir = File("d"), demo = CliOptions.DemoMode.INSTANT), CliOptions.parse(listOf("--demo", "--sessions", "d")), "in any order")
     }
 
     @Test
     fun aValueIsTakenAsItIsAndAnOptionThatOnlyLooksKnownIsNot() {
         assertEquals("", CliOptions.parse(listOf("--ide", "")).ideCommand)
         assertEquals(File("my traces/run 1.ctrace"), CliOptions.parse(listOf("my traces/run 1.ctrace")).trace, "arguments are not split again")
-        for (bad in listOf(listOf("--demo=fast"), listOf("--demo", "live", "x"), listOf("--ide"), listOf("--dir"), listOf("--session"), listOf("--Trace", "a"), listOf("-trace", "a", "b"), listOf("--trace", "a", "b"))) {
+        for (bad in listOf(listOf("--demo=fast"), listOf("--demo", "live", "x"), listOf("--ide"), listOf("--sessions"), listOf("--session"), listOf("--Trace", "a"), listOf("-trace", "a", "b"), listOf("--trace", "a", "b"))) {
             assertFailsWith<CliOptions.UsageException>("$bad") { CliOptions.parse(bad) }
         }
     }
@@ -65,11 +65,10 @@ class CliOptionsTest {
     fun theUsageTextNamesExactlyTheOptionsThereAre() {
         val named = Regex("""--[a-z][a-z-]*(=[a-z]+)?""").findAll(CliOptions.USAGE.replace("[=live]", "")).map { it.value }.toSet() +
             Regex("""--demo\[(=[a-z]+)]""").findAll(CliOptions.USAGE).map { "--demo" + it.groupValues[1] }
-        assertEquals(setOf("--trace", "--session", "--dir", "--open-latest", "--ide", "--demo", "--demo=live"), named)
+        assertEquals(setOf("--trace", "--session", "--sessions", "--ide", "--demo", "--demo=live"), named)
         for (option in named) {
             val arguments = when (option) {
-                "--trace", "--session", "--dir", "--ide" -> listOf(option, "value")
-                "--open-latest" -> listOf("--dir", "d", option)
+                "--trace", "--session", "--sessions", "--ide" -> listOf(option, "value")
                 else -> listOf(option)
             }
             assertTrue(CliOptions.parse(arguments) != CliOptions(), "$option is understood and changes something")

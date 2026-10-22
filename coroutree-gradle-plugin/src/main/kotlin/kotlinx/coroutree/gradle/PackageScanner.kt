@@ -3,14 +3,14 @@ package kotlinx.coroutree.gradle
 import java.io.File
 
 /**
- * Finds the `package` declaration of a Kotlin or Java source file without parsing the file.
+ * Scans only the source prefix before the package declaration. Stops at any token other than:
  *
- * Only what may legally precede the declaration is understood: whitespace, comments (nested ones too, Kotlin allows
- * them) and annotations (`@file:JvmName("…")`, `@file:[A B]`, annotations of `package-info.java`). The scan stops at
- * the first token that is anything else, so the cost does not depend on the size of the file.
+ * - Whitespace.
+ * - Comments, including nested Kotlin comments.
+ * - File or package annotations.
  */
 internal object PackageScanner {
-    /** Enough for any license header; a file whose header is longer is reported as being in the root package. */
+    /** A declaration beyond this character limit is reported as the root package. */
     private const val MAX_PREFIX = 64 * 1024
 
     fun packageOf(file: File): String {
@@ -27,8 +27,6 @@ internal object PackageScanner {
         return packageOf(String(buffer, 0, length), kotlin = !file.name.endsWith(".java"))
     }
 
-    // [kotlin] decides whether block comments nest: in Kotlin they do, in Java a second opening inside a comment is
-    // just text. (Which is why this is not a KDoc: spelling the opening out here would open one.)
     fun packageOf(source: String, kotlin: Boolean = true): String = Scan(source, nestedComments = kotlin).packageName()
 
     private class Scan(private val text: String, private val nestedComments: Boolean) {
@@ -78,7 +76,6 @@ internal object PackageScanner {
             return text.substring(start, pos)
         }
 
-        /** Whitespace and comments, across lines. */
         private fun skipBlank() {
             while (pos < text.length) {
                 when {
@@ -125,7 +122,7 @@ internal object PackageScanner {
         }
 
         private fun skipAnnotation() {
-            pos++ // @
+            pos++
             while (pos < text.length) {
                 val c = text[pos]
                 if (Character.isJavaIdentifierPart(c) || c == '.') {

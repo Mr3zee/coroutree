@@ -8,14 +8,9 @@ import kotlinx.coroutree.gui.view.graph.GraphLayout
 import kotlin.math.abs
 
 /**
- * What the graph pane shows right now: the settled layout it is heading for, how far the boxes have glided towards
- * it, and the viewport. Holds no Compose UI, only snapshot state, so tests drive it directly.
- *
- * When the layout changes (DESIGN §6.1, "change over time") boxes glide from where they are drawn to their new
- * places and new ones fade in; [advance] is called with the fraction of the way. The viewport stays anchored: the
- * selected node, or without one the node that was nearest the middle of the pane, stays where it is on screen while
- * the rest moves around it. Until the user takes over the viewport ([autoFit]) it keeps the whole graph in view
- * instead, which is what one wants of a live trace that starts as a single box.
+ * During layout animation, the selected node stays at its screen position.
+ * Without a selection, the nearest visible node to the pane's center anchors the viewport.
+ * While [autoFit] is true, the viewport fits the whole graph instead (DESIGN §6.1).
  */
 class GraphViewState {
     var viewport: Viewport by mutableStateOf(Viewport())
@@ -33,7 +28,7 @@ class GraphViewState {
     var height: Float by mutableFloatStateOf(0f)
         private set
 
-    /** Where the boxes were drawn when the current glide began; `null` when there is none. */
+    /** Box positions at animation start, or null without an animation. */
     private var from: Map<Long, FloatRect>? = null
     private var viewportAtStart = Viewport()
     private var anchorId: Long? = null
@@ -48,8 +43,8 @@ class GraphViewState {
     }
 
     /**
-     * Makes [newLayout] the one to show. Returns whether there is a glide to run: the caller then calls [advance]
-     * with fractions up to 1. A first layout, or one too big to animate, is shown at once.
+     * If true, the caller must call [advance] with animation fractions up to 1.
+     * The first layout and layouts above [ANIMATION_LIMIT] appear immediately.
      */
     fun show(newLayout: GraphLayout, selectedNodeId: Long?): Boolean {
         if (newLayout === layout) return !settled
@@ -84,20 +79,17 @@ class GraphViewState {
         if (target >= 1f) from = null
     }
 
-    /** Where the box of [id] is drawn at this moment, in world coordinates; `null` if it is not in the layout. */
+    /** Current box position in world coordinates, or null if [id] isn't in the layout. */
     fun rect(id: Long): FloatRect? {
         val target = layout.box(id)?.rect?.toFloatRect() ?: return null
         val start = from?.get(id) ?: return target
         return if (settled) target else start.lerp(target, progress)
     }
 
-    /** Boxes that were not there before fade in where they belong rather than fly in from somewhere. */
     fun alpha(id: Long): Float = if (settled || from?.containsKey(id) != false) 1f else progress
 
-    /** Edges are those of the new layout; they fade in over the second half of the glide, when the boxes are nearly there. */
+    /** New-layout edges fade in during the second half of the animation. */
     val edgeAlpha: Float get() = if (settled) 1f else ((progress - 0.5f) * 2f).coerceAtLeast(0f)
-
-    // --- gestures ---------------------------------------------------------------------------------------------------
 
     fun pan(dx: Float, dy: Float) {
         autoFit = false
@@ -109,22 +101,22 @@ class GraphViewState {
         viewport = viewport.zoomedBy(factor, anchorX, anchorY, minZoom = fitting().zoom)
     }
 
-    /** Zoom-to-fit; the viewport goes back to following the graph as it grows. */
+    /** Reenables automatic fitting as the graph grows. */
     fun fit() {
         autoFit = true
         viewport = fitting()
     }
 
-    /** Zoom-to-selection: the node at 1:1 in the middle of the pane. */
+    /** Centers the node at 1:1 zoom and disables automatic fitting. */
     fun zoomTo(id: Long) {
         val rect = layout.box(id)?.rect?.toFloatRect() ?: return
         autoFit = false
         viewport = viewport.centredOn(rect, width, height, zoom = 1f)
     }
 
-    /** Brings the node into view if it is not, without touching the zoom. */
+    /** Reveals an offscreen node at the current zoom. */
     fun reveal(id: Long) {
-        if (width <= 0f || height <= 0f) return // not on screen yet; it will open fitted, with everything in view
+        if (width <= 0f || height <= 0f) return // the first layout opens fitted
         val rect = layout.box(id)?.rect?.toFloatRect() ?: return
         val revealed = viewport.revealing(rect, width, height)
         if (revealed != viewport) {
@@ -133,13 +125,11 @@ class GraphViewState {
         }
     }
 
-    /** The middle of the pane goes to the world point ([worldX], [worldY]): a click on the minimap. */
     fun centreOn(worldX: Float, worldY: Float) {
         autoFit = false
         viewport = viewport.centredOn(FloatRect(worldX, worldY, worldX, worldY), width, height)
     }
 
-    /** Nothing of the graph is outside the pane: there is nowhere to navigate to, and no use for a minimap. */
     val wholeGraphInView: Boolean
         get() {
             val visible = viewport.visibleWorld(width, height)
@@ -147,13 +137,12 @@ class GraphViewState {
             return visible.left <= bounds.left && visible.top <= bounds.top && visible.right >= bounds.right && visible.bottom >= bounds.bottom
         }
 
-    /** Whether the whole box of [id] is inside the pane right now. */
     fun isInView(id: Long): Boolean {
         val onScreen = rect(id)?.let(viewport::toScreen) ?: return false
         return onScreen.left >= 0f && onScreen.top >= 0f && onScreen.right <= width && onScreen.bottom <= height
     }
 
-    /** The node drawn at a point of the pane, by its settled place. */
+    /** Uses settled box positions even during animation. */
     fun nodeAt(screenX: Float, screenY: Float): Long? =
         layout.boxAt(viewport.toWorldX(screenX).toInt(), viewport.toWorldY(screenY).toInt())?.id
 
@@ -168,7 +157,6 @@ class GraphViewState {
     }
 
     companion object {
-        /** Beyond this many boxes a change is shown at once: a glide of ten thousand boxes is a slide show. */
         const val ANIMATION_LIMIT = 3000
     }
 }

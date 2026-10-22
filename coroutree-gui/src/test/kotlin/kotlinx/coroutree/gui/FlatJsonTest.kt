@@ -50,7 +50,7 @@ class FlatJsonTest {
         malformed.forEach(::rejected)
     }
 
-    /** CoroutreeDir.sessions: "Files that cannot be parsed (half-written, foreign) are skipped" — whatever was written so far. */
+    /** SessionRegistry.sessions: "Files that cannot be parsed (half-written, foreign) are skipped" — whatever was written so far. */
     @Test
     fun everyHalfWrittenSessionFileIsRejectedCleanly() {
         val whole = """{"pid":4242,"port":51234,"token":"a\"b\\c\u00e9","traceFile":"/b/build/coroutree/traces/x/run.ctrace","taskPath":":app:run","startedAt":1789668900000,"paceable":true,"ended":false,"load":1.5e0,"note":null}"""

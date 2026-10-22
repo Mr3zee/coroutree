@@ -15,19 +15,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Calls to {@code kotlinx.coroutree.runtime.Hooks} woven into one method: at its start, before its returns, around
- * it like try/finally, or in front of a call it makes.
- *
- * Inserted code is straight-line on purpose. No branches means no new stack map frames inside existing code, so classes
- * are rewritten without recomputing frames — which would need the class hierarchy, i.e. class loading from inside a
- * transformer. The one frame that is needed, at the catch-all handler of {@link #around}, is written out by hand.
+ * Hook code must have no branches. Recomputing stack map frames would load classes inside the transformer.
+ * {@link #around} adds one frame at its catch-all handler without hierarchy lookup.
  */
 final class MethodPatch {
     static final String HOOKS = "kotlinx/coroutree/runtime/Hooks";
 
     final String name;
     final String descriptor;
-    /** Missing a required method means the library changed under us and the capture is wrong: reported loudly. */
+    /** A missing required method is an instrumentation error. */
     final boolean required;
     private final HookCall onEnter;
     private final HookCall onExit;
@@ -53,7 +49,7 @@ final class MethodPatch {
         return new MethodPatch(name, descriptor, true, hook, null, false);
     }
 
-    /** Before every normal return. The only kind usable on constructors: by then {@code this} is initialized. */
+    /** The only patch usable on constructors because {@code this} is initialized at a normal return. */
     static MethodPatch exit(String name, String descriptor, HookCall hook) {
         return new MethodPatch(name, descriptor, true, null, hook, false);
     }
@@ -68,8 +64,7 @@ final class MethodPatch {
     }
 
     /**
-     * In front of every call the method makes to {@code callOwner.callName callDescriptor}, which must be one with a
-     * receiver and a single one-slot argument: that is what {@link Args#callOperands} knows how to hand to the hook.
+     * The target call must have a receiver and one single-slot argument, as required by {@link Args#callOperands}.
      */
     static MethodPatch beforeCall(String name, String descriptor, String callOwner, String callName, String callDescriptor, HookCall hook) {
         return new MethodPatch(name, descriptor, true, hook, null, false, new String[] {callOwner, callName, callDescriptor});
@@ -110,19 +105,18 @@ final class MethodPatch {
             InsnList epilogue = new InsnList();
             epilogue.add(end);
             epilogue.add(handler);
-            // At the handler nothing is known about locals except `this`, and nothing but `this` is needed.
+            // Only `this` has a known type at this handler, and the exit hook needs no other locals.
             Object[] locals = context.isStatic ? new Object[0] : new Object[] {owner};
             epilogue.add(new FrameNode(Opcodes.F_NEW, locals.length, locals, 1, new Object[] {"java/lang/Throwable"}));
             epilogue.add(onExit.emit(context, Opcodes.ATHROW));
             epilogue.add(new InsnNode(Opcodes.ATHROW));
             method.instructions.add(epilogue);
-            // Last in the table: the method's own handlers keep priority over this catch-all.
+            // The method's own handlers must take priority over this catch-all.
             method.tryCatchBlocks.add(new TryCatchBlockNode(start, end, handler, null));
         }
         return true;
     }
 
-    /** Returns false if the method does not make the call: as good as a method that is not there. */
     private boolean applyBeforeCalls(MethodNode method, Context context) {
         boolean found = false;
         for (AbstractInsnNode insn : method.instructions.toArray()) {
@@ -134,7 +128,6 @@ final class MethodPatch {
         return found;
     }
 
-    /** What a {@link HookCall} needs to know about the method it is emitted into. */
     static final class Context {
         final String owner;
         final boolean isStatic;
@@ -162,7 +155,6 @@ final class MethodPatch {
         }
     }
 
-    /** A call to one static method of Hooks, with the code that pushes its arguments. */
     static final class HookCall {
         private final String hook;
         private final String hookDescriptor;

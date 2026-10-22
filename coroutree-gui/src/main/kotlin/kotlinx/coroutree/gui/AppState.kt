@@ -8,30 +8,32 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutree.gui.ide.IdeOpener
-import kotlinx.coroutree.gui.source.CoroutreeDir
+import kotlinx.coroutree.gui.source.FeedStatus
+import kotlinx.coroutree.gui.source.SessionRegistry
 import kotlinx.coroutree.gui.source.TraceFeed
 import kotlinx.coroutree.gui.source.TraceSource
 import kotlinx.coroutree.gui.view.TraceViewModel
 import kotlinx.coroutree.model.StackFrameDef
-import java.io.File
-import java.util.prefs.Preferences
+import kotlinx.coroutree.model.tree.TraceSnapshot
 
-/** A trace on screen: where it comes from and how it is being looked at. */
-class OpenTrace(val feed: TraceFeed, val viewModel: TraceViewModel = TraceViewModel())
+/**
+ * [catchUpTo] is the snapshot on screen when a reconnect replaced the feed. The new feed replays from the first byte,
+ * so its snapshots are shown only once they have caught up: the graph never shrinks on the way.
+ */
+class OpenTrace(val feed: TraceFeed, val viewModel: TraceViewModel = TraceViewModel(), private val catchUpTo: TraceSnapshot? = null) {
+    /** Whether [snapshot], the feed's latest, replaces what the view shows. */
+    fun shows(snapshot: TraceSnapshot, status: FeedStatus): Boolean =
+        catchUpTo == null || snapshot.events.size >= catchUpTo.events.size || status.terminal
+}
 
-/** Everything that outlives a single trace: what is open, which build directory to offer, how to reach the IDE. */
 class AppState(
     private val scope: CoroutineScope,
     private val ideOpener: IdeOpener,
-    initialDir: File?,
-    private val rememberDir: (File) -> Unit = {},
+    val registry: SessionRegistry = SessionRegistry(),
 ) {
     var current: OpenTrace? by mutableStateOf(null)
         private set
-    var dir: File? by mutableStateOf(initialDir)
-        private set
 
-    /** Transient, self-dismissing note at the bottom of the window. */
     var message: String? by mutableStateOf(null)
         private set
     private var messageJob: Job? = null
@@ -41,18 +43,28 @@ class AppState(
         current = OpenTrace(TraceFeed(source, scope))
     }
 
+    /** Leaves the captured trace on screen and the JVM running. */
+    fun disconnect() {
+        val open = current ?: return
+        scope.launch { open.feed.disconnect() }
+    }
+
+    /**
+     * Replays the trace from the start with the current selection and viewport.
+     * Node ids remain valid for the JVM's lifetime.
+     */
+    fun reconnect() {
+        val open = current ?: return
+        val source = open.feed.source as? TraceSource.Session ?: return
+        scope.launch { open.feed.close() }
+        current = OpenTrace(TraceFeed(source, scope), open.viewModel, catchUpTo = open.feed.snapshot.value)
+    }
+
     fun close() {
         val closing = current ?: return
         current = null
         scope.launch { closing.feed.close() }
     }
-
-    fun chooseDir(chosen: File) {
-        dir = chosen
-        rememberDir(chosen)
-    }
-
-    fun coroutreeDir(): CoroutreeDir? = dir?.takeIf { it.isDirectory }?.let(::CoroutreeDir)
 
     fun openInIde(frame: StackFrameDef) {
         val location = current?.viewModel?.snapshot?.sources?.resolve(frame)
@@ -74,17 +86,6 @@ class AppState(
         messageJob = scope.launch {
             delay(5000)
             message = null
-        }
-    }
-
-    companion object {
-        private const val LAST_DIR = "lastDir"
-        private val preferences: Preferences? = runCatching { Preferences.userRoot().node("org/jetbrains/kotlinx/coroutree/gui") }.getOrNull()
-
-        fun rememberedDir(): File? = runCatching { preferences?.get(LAST_DIR, null) }.getOrNull()?.let(::File)?.takeIf { it.isDirectory }
-
-        fun rememberDir(dir: File) {
-            runCatching { preferences?.put(LAST_DIR, dir.absolutePath) }
         }
     }
 }

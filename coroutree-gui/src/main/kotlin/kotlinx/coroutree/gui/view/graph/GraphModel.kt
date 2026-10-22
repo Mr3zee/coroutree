@@ -1,22 +1,22 @@
 package kotlinx.coroutree.gui.view.graph
 
-/** The cross-links the graph draws (DESIGN §2.4); the structural parent → child edge is not one of them. */
+/** Cross-link kinds (DESIGN §2.4). Excludes structural parent-child edges. */
 enum class EdgeKind {
     LAUNCHED_FROM,
     CANCELS,
     INTERRUPTS,
 
-    /** Coroutine → the thread it runs on right now. Every running coroutine has one, so only the selection's is drawn. */
+    /** Only the selected coroutine's current thread link is drawn. */
     RUNS_ON,
 }
 
-/** A box to lay out. Sibling order is the order of [GraphModel.nodes]. */
+/** Sibling order follows [GraphModel.nodes]. */
 data class GraphNode(
     val id: Long,
-    /** 0, or an id that is not in the graph, for a root. */
+    /** 0 or an id absent from the graph means a root. */
     val parentId: Long,
     val title: String = "",
-    /** Width the content asks for; the engine widens a box that needs more room for its ports. */
+    /** Requested width. The engine can widen the box for its ports. */
     val width: Int = GraphMetrics.MIN_NODE_WIDTH,
     /** Library machinery, shown because "show library / pools" is on. */
     val dimmed: Boolean = false,
@@ -27,15 +27,10 @@ data class GraphLink(
     val kind: EdgeKind,
     val from: Long,
     val to: Long,
-    /** Width of the label the edge would like to carry, 0 for none. The engine may grant less (DESIGN §6.2, rule 5). */
+    /** Requested label width, or 0 for none. The engine can truncate the label (DESIGN §6.2, rule 5). */
     val labelWidth: Int = 0,
 )
 
-/**
- * What is in the graph at one moment: the visible part of the structural forest and the cross-links between its nodes.
- * Plain data with structural equality: a snapshot that changes no box and no edge yields an equal model, and the
- * layout is not computed again.
- */
 data class GraphModel(val nodes: List<GraphNode>, val links: List<GraphLink>) {
     companion object {
         val EMPTY = GraphModel(emptyList(), emptyList())
@@ -43,13 +38,14 @@ data class GraphModel(val nodes: List<GraphNode>, val links: List<GraphLink>) {
 }
 
 /**
- * Sizes and distances of the drawing, in dp at zoom 1.
+ * All dimensions are in dp at zoom 1. Vertical lines use three residue classes modulo [COLUMN]:
  *
- * Separation of lines is by construction, and this is what it is constructed from. Every vertical piece of a line
- * has an x of one of three residue classes modulo [COLUMN]: structural ports (box centres) are multiples of [COLUMN],
- * the cross-link ports and gap tracks that belong to a layer are at `+UNIT` on even layers and `+2·UNIT` on odd ones.
- * Two verticals that can meet in one channel are either of different classes, and then at least [UNIT] apart, or of
- * the same class and then [COLUMN] apart (or the trunk and a drop of one parent, which are one shape).
+ * - Structural ports and box centers: 0.
+ * - Cross-link ports and gap tracks on even layers: [UNIT].
+ * - Cross-link ports and gap tracks on odd layers: `2 * UNIT`.
+ *
+ * Distinct verticals in one channel are at least [UNIT] apart across classes and [COLUMN] apart in the same class.
+ * A parent's trunk and drops count as one shape and can share x coordinates.
  */
 object GraphMetrics {
     /** Minimum distance between two lines. */
@@ -64,7 +60,7 @@ object GraphMetrics {
     /** Minimum free space between two boxes. */
     const val BOX_GAP = 24
 
-    /** Minimum distance between a line and a box it does not end at. */
+    /** Minimum distance between a line and a box that isn't its endpoint. */
     const val BOX_CLEARANCE = 8
 
     /** Between a vertical track in the gap of two boxes and either of them. */
@@ -85,7 +81,7 @@ object GraphMetrics {
     /** Between a label and the nearest vertical line, its own bends included. */
     const val LABEL_CLEARANCE = 4
 
-    /** A label narrower than this says nothing; the edge goes without. */
+    /** Labels below this width are omitted. */
     const val MIN_LABEL_WIDTH = 28
 
     /** Empty space around the drawing. */
@@ -97,7 +93,6 @@ object GraphMetrics {
     private const val TITLE_CHAR_WIDTH = 7.6
     private const val LABEL_CHAR_WIDTH = 6.4
 
-    /** Box width for a title of [chars] monospace characters: icon, text and padding, within the allowed range, even. */
     fun nodeWidth(chars: Int): Int {
         val wanted = 8 + 16 + 6 + Math.ceil(chars * TITLE_CHAR_WIDTH).toInt() + 10
         return wanted.coerceIn(MIN_NODE_WIDTH, MAX_NODE_WIDTH).let { it + it % 2 }

@@ -6,6 +6,8 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose)
+    // Development only: `hotRun --auto` runs the GUI on the JetBrains Runtime and swaps the code in as it is edited.
+    alias(libs.plugins.hot.reload)
     `maven-publish`
 }
 
@@ -59,6 +61,15 @@ dependencies {
 compose.desktop {
     application {
         mainClass = mainClassName
+    }
+}
+
+// Hot reload needs the JetBrains Runtime (its DCEVM swaps classes), which exists for 21 but not for the toolchain's 26:
+// the plugin would ask foojay for a JBR 26 and fail. The GUI is JVM 17 bytecode, so JBR 21 runs it as any JDK does.
+tasks.withType<org.jetbrains.compose.reload.gradle.AbstractComposeHotRun>().configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+        vendor = JvmVendorSpec.JETBRAINS
     }
 }
 

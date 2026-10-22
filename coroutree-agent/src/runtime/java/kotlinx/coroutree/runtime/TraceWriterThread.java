@@ -11,13 +11,10 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 
 /**
- * The only thread that writes the trace file, and the file is the only thing it writes: live clients are served by
- * threads of their own that read the file back ({@link LiveServer}), so a client that is slow or stuck cannot hold
- * up the capture.
+ * Only this thread writes the trace file. {@link LiveServer} reads it independently, so slow clients can't block writes.
  *
- * Hooks hand events over through a lock-free queue and never wait. This thread drains the queue in batches, puts each
- * batch back into sequence order (threads race between taking a number and enqueueing), encodes and writes it, and
- * flushes whenever it runs dry, so a JVM that dies abruptly leaves a trace that is at most a moment behind.
+ * Hooks enqueue without waiting. Threads can enqueue out of sequence, so batches are sorted before encoding.
+ * Flushes when the queue empties to limit data loss on abrupt exit.
  */
 final class TraceWriterThread extends AgentThread {
     private static final int MAX_BATCH = 8192;
@@ -30,7 +27,7 @@ final class TraceWriterThread extends AgentThread {
             return Long.compare(seq(a), seq(b));
         }
 
-        // Diagnostics carry no number; sorting them first keeps them near where they were enqueued.
+        // Diagnostics have no sequence number. Sorting them first leaves them near their enqueue point.
         // A setting of the gate goes behind the event it was made after (the sort is stable).
         private long seq(Object item) {
             if (item instanceof TraceEvent event) return event.seq;
@@ -44,8 +41,7 @@ final class TraceWriterThread extends AgentThread {
     private final TraceEncoder encoder;
     private final ArrayList<Object> batch = new ArrayList<>();
     /**
-     * For tests only ({@code -Dcoroutree.debug.writerFailsAfterMillis}): the writer fails that long after it started, the
-     * way it would on a full disk. What has to be seen then is a program that was paused going on.
+     * Simulates a write failure after the configured delay to test that paused programs resume.
      */
     private final long failsAtNanos;
     private volatile boolean stopping;

@@ -52,7 +52,7 @@ class CoroutreePluginFunctionalTest {
         val buildId = config.getProperty("build.id")
         assertTrue(Regex("""\d{8}-\d{6}-[0-9a-z]{4}""").matches(buildId), buildId)
         assertEquals(File(project.dir, "build/coroutree/traces/$buildId").path, config.getProperty("trace.dir"))
-        assertEquals(File(project.dir, "build/coroutree/sessions/$buildId").path, config.getProperty("sessions.dir"))
+        assertNull(config.getProperty("sessions.dir"), "the session goes to the user's registry, where the GUI looks")
         assertTrue(File(config.getProperty("trace.dir")).isDirectory)
         assertEquals("true", config.getProperty("live"))
         assertEquals(":run", config.getProperty("task.path"))
@@ -92,6 +92,7 @@ class CoroutreePluginFunctionalTest {
                         eventsPerSecond = 0.2
                     }
                     stackDepth = 8
+                    sessionsDirectory = layout.buildDirectory.dir("coroutree/sessions")
                 }
             """,
         )
@@ -106,6 +107,7 @@ class CoroutreePluginFunctionalTest {
         assertEquals("false", config.getProperty("pace"))
         assertEquals("true", config.getProperty("pace.paused"))
         assertEquals("0.2", config.getProperty("pace.events.per.second"))
+        assertEquals(File(project.dir, "build/coroutree/sessions").path, config.getProperty("sessions.dir"), "a build can keep its JVMs out of the user's registry")
     }
 
     // ------------------------------------------------------------------ the command line wins over the build script
@@ -235,7 +237,7 @@ class CoroutreePluginFunctionalTest {
     @Test
     fun startPausedWithoutTheLiveSocketIsRefusedOnWhatTheSettingsResolveTo() {
         project.javaApplication(extraBuildScript = everythingOn)
-        val warning = "without the live socket nothing could ever resume it"
+        val warning = "ignores pace.startPaused because with live=false no GUI can resume it"
         assertFalse(warning in project.run("run").output)
 
         // The script asks for a paused start and for live; the command line takes live away.
@@ -528,9 +530,6 @@ class CoroutreePluginFunctionalTest {
                     "-cp",
                     listOf("gui.jar", "gui-dependency.jar").joinToString(File.pathSeparator) { File(project.dir, it).path },
                     "kotlinx.coroutree.gui.MainKt",
-                    "--dir",
-                    File(project.dir, "build/coroutree").path,
-                    "--open-latest",
                     "--ide",
                     "idea --line {line} {file}",
                 ),

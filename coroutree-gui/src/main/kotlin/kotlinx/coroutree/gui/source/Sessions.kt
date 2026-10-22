@@ -1,15 +1,15 @@
 package kotlinx.coroutree.gui.source
 
-import kotlinx.coroutree.model.TraceFormat
 import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import kotlin.math.abs
 
-/** The agent's session file: how to reach an instrumented JVM while it runs, and where its trace is. */
 data class SessionInfo(
     val file: File?,
     val pid: Long,
+    /** Socket port, or 0 if the JVM started without a live socket. */
     val port: Int,
     val token: String,
     val traceFile: File?,
@@ -18,15 +18,20 @@ data class SessionInfo(
     val command: String,
     val startedAt: Long,
     val ended: Boolean,
-    /** The JVM has a gate: it can be slowed down, paused and stepped over this session. Older agents never say so. */
     val paceable: Boolean = false,
+    /** The agent was configured for a socket and could not open one. The trace carries the reason as a warning. */
+    val liveFailed: Boolean = false,
 ) {
     val title: String get() = listOf(taskPath, command).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "pid $pid" }
 
+    /** Whether there was ever a socket to connect to. */
+    val live: Boolean get() = port > 0
+
     /**
-     * Connects and authenticates. What comes back is a whole trace from its first byte, growing until the JVM exits.
+     * The socket replays the trace from its first byte, then streams new frames until the JVM exits.
      */
     fun connect(timeoutMillis: Int = CONNECT_TIMEOUT_MILLIS): Socket {
+        require(live) { "The session was recorded without a live socket" }
         val socket = Socket()
         try {
             socket.connect(InetSocketAddress(InetAddress.getLoopbackAddress(), port), timeoutMillis)
@@ -60,6 +65,7 @@ data class SessionInfo(
                 startedAt = long("startedAt"),
                 ended = json["ended"] == true,
                 paceable = json["paceable"] == true,
+                liveFailed = json["liveFailed"] == true,
             )
         }
 
@@ -67,38 +73,98 @@ data class SessionInfo(
     }
 }
 
-/** A build's `build/coroutree` directory. */
-class CoroutreeDir(val dir: File) {
-    /** Newest first. Files that cannot be parsed (half-written, foreign) are skipped. */
+enum class SessionState {
+    RUNNING,
+
+    ENDED,
+
+    /** The descriptor has no end marker and the JVM is gone. */
+    CRASHED,
+
+    /**
+     * The JVM exists but its socket doesn't answer: it is shutting down (the socket closes before the descriptor is
+     * rewritten), or its live server is gone.
+     */
+    UNREACHABLE,
+}
+
+data class SessionEntry(val info: SessionInfo, val state: SessionState) {
+    val running: Boolean get() = state == SessionState.RUNNING
+
+    /** The process exists, reachable or not. */
+    val jvmAlive: Boolean get() = state == SessionState.RUNNING || state == SessionState.UNREACHABLE
+
+    val openable: Boolean get() = running || info.traceFile?.isFile == true
+}
+
+/**
+ * Reads the shared user registry, including JVMs started by other builds.
+ */
+class SessionRegistry(val dir: File = defaultDir()) {
+    /** Newest first. Skips unreadable or invalid descriptors. */
     fun sessions(): List<SessionInfo> =
-        filesTwoLevelsDown("sessions", "json")
+        dir.listFiles { f -> f.isFile && f.extension == "json" }.orEmpty()
             .mapNotNull { runCatching { SessionInfo.read(it) }.getOrNull() }
             .sortedByDescending { it.startedAt }
 
-    /** Newest first. */
-    fun traces(): List<File> = filesTwoLevelsDown("traces", TraceFormat.FILE_EXTENSION).sortedByDescending { it.lastModified() }
-
     /**
-     * What `--open-latest` opens: the newest session that is still running and [reachable], or else the newest trace.
+     * Crashed JVMs leave descriptors unchanged, so running status requires a live process and a reachable socket, if configured.
      */
-    fun latest(reachable: (SessionInfo) -> Boolean = ::isReachable): TraceSource? {
-        sessions().firstOrNull { !it.ended && reachable(it) }?.let { return TraceSource.Session(it) }
-        return traces().firstOrNull()?.let { TraceSource.TraceFile(it) }
+    fun entries(reachable: (SessionInfo) -> Boolean = ::isReachable): List<SessionEntry> = sessions().map { info ->
+        val state = when {
+            info.ended -> SessionState.ENDED
+            !isAlive(info) -> SessionState.CRASHED
+            !info.live || reachable(info) -> SessionState.RUNNING
+            else -> SessionState.UNREACHABLE
+        }
+        SessionEntry(info, state)
     }
 
-    private fun filesTwoLevelsDown(child: String, extension: String): List<File> =
-        File(dir, child).listFiles { f -> f.isDirectory }.orEmpty()
-            .flatMap { it.listFiles { f -> f.isFile && f.extension == extension }.orEmpty().asList() }
+    /** The newest JVM that runs, else the newest run whose trace is still there. */
+    fun latest(reachable: (SessionInfo) -> Boolean = ::isReachable): TraceSource? {
+        val entries = entries(reachable)
+        val latest = entries.firstOrNull { it.running } ?: entries.firstOrNull { it.openable } ?: return null
+        return TraceSource.Session(latest.info)
+    }
+
+    /**
+     * Deletes ended sessions with missing traces and all but the newest [keep] remaining ended sessions.
+     * Sessions of JVMs that exist are never deleted, reachable or not.
+     */
+    fun prune(keep: Int = KEEP, reachable: (SessionInfo) -> Boolean = ::isReachable): Int {
+        var deleted = 0
+        var kept = 0
+        for (entry in entries(reachable)) {
+            if (entry.jvmAlive) continue
+            val forget = entry.info.traceFile?.isFile != true || ++kept > keep
+            if (forget && entry.info.file?.delete() == true) deleted++
+        }
+        return deleted
+    }
 
     companion object {
-        // A crashed JVM leaves a session file that still says "running"; only a connection tells.
-        // The probe does not authenticate, so the agent drops it without starting a replay.
-        fun isReachable(session: SessionInfo): Boolean = try {
+        const val KEEP = 50
+
+        /** Must match the agent's default sessions directory in AgentConfig. */
+        fun defaultDir(): File = File(System.getProperty("user.home", "."), ".coroutree/sessions")
+
+        fun isAlive(session: SessionInfo): Boolean {
+            val process = ProcessHandle.of(session.pid).orElse(null)?.takeIf { it.isAlive } ?: return false
+            val started = process.info().startInstant().orElse(null) ?: return true
+            // The process starts shortly before the agent records startedAt. A start well after or well before that
+            // is another process with the same pid.
+            return session.startedAt <= 0 || abs(started.toEpochMilli() - session.startedAt) <= PID_REUSE_MARGIN_MILLIS
+        }
+
+        // The probe doesn't authenticate, so the agent closes it without replaying the trace.
+        fun isReachable(session: SessionInfo): Boolean = session.live && try {
             Socket().use { it.connect(InetSocketAddress(InetAddress.getLoopbackAddress(), session.port), 300) }
             true
         } catch (_: Exception) {
             false
         }
+
+        private const val PID_REUSE_MARGIN_MILLIS = 60_000L
     }
 }
 

@@ -56,7 +56,7 @@ public class CoroutreePlugin : Plugin<Project> {
 
         project.tasks.register(VIEW_TASK, CoroutreeViewTask::class.java) { task ->
             task.group = TASK_GROUP
-            task.description = "Opens the coroutree GUI on the latest trace or live session of this build."
+            task.description = "Opens the coroutree GUI, which lists the JVMs running under the agent and the recent runs."
             task.guiClasspath.from(gui)
             task.dataDirectory.set(dataDirectory)
             task.ideCommand.set(extension.ideCommand)
@@ -98,6 +98,7 @@ public class CoroutreePlugin : Plugin<Project> {
         arguments.includedPackages.set(extension.includedPackages)
         arguments.excludedPackages.set(extension.excludedPackages)
         arguments.taskPath.set(task.path)
+        arguments.sessionsDirectory.set(extension.sessionsDirectory.map { it.asFile.absolutePath })
         arguments.rootProjectDirectory.set(project.rootDir.absolutePath)
         arguments.dataDirectory.set(dataDirectory)
         arguments.workDirectory.set(project.layout.buildDirectory.dir("coroutree/tmp/${task.name}").map { it.asFile.absolutePath })
@@ -135,8 +136,8 @@ public class CoroutreePlugin : Plugin<Project> {
                     // The Kotlin Gradle plugin lives in a class loader this plugin cannot see,
                     // which happens when it is applied to a child project only but this plugin comes from the parent.
                     project.logger.warn(
-                        "coroutree: cannot read the Kotlin source sets of ${project.path} ($e); Kotlin sources will not open from the GUI. " +
-                            "Declare the Kotlin Gradle plugin in the same plugins { } block as coroutree, with 'apply false' if need be."
+                        "coroutree: can't read the Kotlin source sets of ${project.path}, so Kotlin sources don't open from the GUI ($e). " +
+                            "Declare the Kotlin Gradle plugin in the same plugins { } block as coroutree, with 'apply false' if needed."
                     )
                 }
             }
@@ -220,7 +221,7 @@ public class CoroutreePlugin : Plugin<Project> {
                 else -> null
             }
             return classifier ?: throw GradleException(
-                "The coroutree GUI is not published for $osName/$osArch. Point the '$GUI_CONFIGURATION' configuration at a build of it."
+                "The coroutree GUI isn't published for $osName/$osArch. Add a build of it to the '$GUI_CONFIGURATION' configuration."
             )
         }
     }

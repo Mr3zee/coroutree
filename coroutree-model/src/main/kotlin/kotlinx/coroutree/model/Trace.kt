@@ -5,14 +5,16 @@ import kotlinx.serialization.protobuf.ProtoNumber
 import kotlinx.serialization.protobuf.ProtoPacked
 
 /*
- * Wire model of a coroutree trace. See docs/TRACE_FORMAT.md for the schema in .proto notation.
+ * Schema in .proto notation: docs/TRACE_FORMAT.md.
  *
- * The agent does not link against this module: its bootstrap runtime is dependency-free Java and encodes the same
- * messages by hand (kotlinx.coroutree.runtime.TraceEncoder). Field numbers and enum numbers below are therefore the
- * contract; WireCompatibilityTest in coroutree-integration-tests keeps the two sides honest.
+ * The agent encodes the same messages independently in kotlinx.coroutree.runtime.TraceEncoder.
+ * Field and enum numbers must match both implementations. WireCompatibilityTest checks their compatibility.
  *
- * Conventions (proto3 style): every field has a zero default and is omitted from the wire when it holds that default,
- * 0 means "none" for node ids and "unknown" for line numbers, enums start with an UNSPECIFIED entry.
+ * Proto3 conventions:
+ *
+ * - Fields with zero defaults are omitted from the wire.
+ * - Node id 0 means "none". Line number 0 means "unknown".
+ * - Enums start with UNSPECIFIED at 0.
  */
 
 /** One length-delimited record of a trace file or live stream. Exactly one field is set. */
@@ -30,21 +32,25 @@ public data class Frame(
 public data class TraceHeader(
     @ProtoNumber(1) val formatVersion: Int = 0,
     @ProtoNumber(2) val agentVersion: String = "",
-    /** Build invocation id; traces of all JVMs forked by one Gradle invocation share it. */
+    /** Shared by all JVMs forked by one Gradle invocation. */
     @ProtoNumber(3) val buildId: String = "",
     /** Gradle path of the task that forked the JVM, empty when the agent was attached by hand. */
     @ProtoNumber(4) val taskPath: String = "",
     @ProtoNumber(5) val jvm: JvmInfo = JvmInfo(),
     @ProtoNumber(6) val sourceIndex: SourceIndex = SourceIndex(),
-    /** Package prefixes tagged as project code. Empty means "everything that is not a known runtime". */
+    /** Package prefixes tagged as project code. Empty means "everything that isn't a known runtime". */
     @ProtoNumber(7) val includePackages: List<String> = emptyList(),
     @ProtoNumber(8) val excludePackages: List<String> = emptyList(),
     @ProtoNumber(9) val startedAtEpochMillis: Long = 0,
     /** Absolute path of the root project directory, empty when unknown. */
     @ProtoNumber(10) val projectDir: String = "",
     /**
-     * The JVM has a gate (execution control): the agent can hold the program at its events. Then events carry
-     * [Event.heldNanos] and [Event.sameStep] and the trace has [PaceDef] frames; without it, it has none of the three.
+     * Whether the agent can hold the program at its events for execution control. Default is false.
+     * Only paceable traces use these fields and frames:
+     *
+     * - [Event.heldNanos]
+     * - [Event.sameStep]
+     * - [PaceDef]
      */
     @ProtoNumber(11) val paceable: Boolean = false,
 ) {
@@ -64,8 +70,8 @@ public data class JvmInfo(
 )
 
 /**
- * Maps `(package, source file name)` — which is all a stack frame knows — to a file on disk.
- * Serialized indexes of several modules can be concatenated byte-wise; protobuf merges the repeated field.
+ * Maps `(package, source file name)` to a file on disk.
+ * Serialized module indexes can be concatenated byte by byte because protobuf merges the repeated field.
  */
 @Serializable
 public data class SourceIndex(
@@ -74,7 +80,7 @@ public data class SourceIndex(
 
 @Serializable
 public data class SourceModule(
-    /** Gradle project path, e.g. `:app`. */
+    /** Gradle project path, for example `:app`. */
     @ProtoNumber(1) val path: String = "",
     /** Absolute path of the module's project directory. */
     @ProtoNumber(2) val rootDir: String = "",
@@ -98,13 +104,14 @@ public data class StackFrameDef(
     @ProtoNumber(4) val fileName: String = "",
     @ProtoNumber(5) val line: Int = 0,
     /**
-     * The body of an inline function, which runs as part of the method of the frame that follows it in a stack.
-     * [className] is the class that declares the function, [methodName] the function, empty when the agent could not tell.
+     * Whether this frame is an inline function body in the method of the next stack frame. Default is false.
+     * [className] identifies the class that declares the function.
+     * [methodName] identifies the function, or is empty when unknown.
      */
     @ProtoNumber(6) val inlined: Boolean = false,
 )
 
-/** Something the agent wants the user to know about the capture itself (e.g. an unsupported library version). */
+/** A capture diagnostic, such as an unsupported library version. */
 @Serializable
 public data class Diagnostic(
     @ProtoNumber(1) val severity: Severity = Severity.UNSPECIFIED,
@@ -131,18 +138,22 @@ public data class Event(
     /** Node id of the thread the event was captured on. */
     @ProtoNumber(5) val threadId: Long = 0,
     /**
-     * Stack frame ids, innermost first. A JVM stack for most kinds; for [EventKind.SUSPENDED] the coroutine's
-     * logical stack recovered from continuation debug metadata.
+     * Stack frame ids, innermost first.
+     * For [EventKind.SUSPENDED], this is the coroutine's logical stack from continuation debug metadata.
+     * Other event kinds use the JVM stack.
      */
     @ProtoNumber(6) @ProtoPacked val stack: List<Int> = emptyList(),
     /** Definition of the node, for [EventKind.LAUNCHED] and [EventKind.DISCOVERED]. */
     @ProtoNumber(7) val node: NodeInfo? = null,
     /**
-     * The other node involved, 0 if none. An event belongs to the node it happens to ([nodeId]); this is where it
-     * came from: the parent (or child) a [EventKind.CANCELLATION_PROPAGATED] arrived from, the child an exception
-     * came from for [EventKind.EXCEPTION_PROPAGATED] and supervisor-[EventKind.EXCEPTION_HANDLED], the requester for
-     * [EventKind.CANCELLATION_REQUESTED] and [EventKind.THREAD_INTERRUPTED]. For [EventKind.THREAD_BLOCKED] and
-     * [EventKind.THREAD_UNBLOCKED] it is the coroutine that was running on the thread.
+     * The other node involved, or 0 if none. [nodeId] identifies the node where the event happens.
+     * This field identifies the source or related coroutine:
+     *
+     * - [EventKind.CANCELLATION_PROPAGATED]: the parent or child that propagated cancellation.
+     * - [EventKind.EXCEPTION_PROPAGATED]: the child that propagated the exception.
+     * - [EventKind.EXCEPTION_HANDLED] with [HandledBy.SUPERVISOR]: the child whose exception the supervisor handled.
+     * - [EventKind.CANCELLATION_REQUESTED] or [EventKind.THREAD_INTERRUPTED]: the requester.
+     * - [EventKind.THREAD_BLOCKED] or [EventKind.THREAD_UNBLOCKED]: the coroutine that ran on the thread.
      */
     @ProtoNumber(8) val otherNodeId: Long = 0,
     @ProtoNumber(9) val exception: ExceptionInfo? = null,
@@ -154,37 +165,38 @@ public data class Event(
     /** For [EventKind.FINISHED]: one of COMPLETED, FAILED, CANCELLED. */
     @ProtoNumber(14) val finalState: NodeState = NodeState.UNSPECIFIED,
     /**
-     * How long the agent held the thread at its gate since the thread's previous event (execution control). The hold
-     * is the tool's doing, not the program's: it is not an event and not a state, and this is where it is accounted for.
+     * Nanoseconds the agent held the thread for execution control since the thread's previous event. Default is 0.
+     * Agent holds cause no program event or state change.
      */
     @ProtoNumber(15) val heldNanos: Long = 0,
     /**
-     * Not the first event of its *step*: no program code ran between the previous event of [threadId] and this one
-     * (*launched* + *context changed*, *thrown* + *handled*, …). Steps are what a pace spaces and what `step n` counts.
+     * Whether this event continues the previous step of [threadId]. Default is false.
+     * No program code runs between events in one step, such as *launched* and *context changed*.
+     * Pacing and `step n` count steps.
      * Only written by a JVM that is [TraceHeader.paceable].
      */
     @ProtoNumber(16) val sameStep: Boolean = false,
 )
 
 /**
- * A setting of the agent's gate, as it is from this moment on: the global one ([scopeNodeId] 0) or that of a node,
- * which holds for the node's structural subtree. Not an event (the program did nothing) and without a [Event.seq];
- * [afterSeq] says where among the events it belongs.
+ * An execution-control setting that takes effect at [afterSeq].
+ * [scopeNodeId] 0 selects the global setting. A nonzero id selects that node's structural subtree.
+ * Settings have no [Event.seq] because they aren't program events.
  */
 @Serializable
 public data class PaceDef(
     /** Nanoseconds since the trace started. */
     @ProtoNumber(1) val timeNanos: Long = 0,
-    /** The latest sequence number handed out when the setting changed; 0 before the first event. */
+    /** The latest sequence number issued when the setting changed, or 0 before the first event. */
     @ProtoNumber(2) val afterSeq: Long = 0,
     @ProtoNumber(3) val scopeNodeId: Long = 0,
-    /** Minimum distance between two steps of one sequence; 0 = no limit. */
+    /** Minimum interval between two steps of one sequence, in nanoseconds. Default is 0 for no limit. */
     @ProtoNumber(4) val intervalNanos: Long = 0,
     @ProtoNumber(5) val paused: Boolean = false,
     /** Steps this change let through a paused gate (`step n`), 0 for any other change. */
     @ProtoNumber(6) val steps: Int = 0,
     @ProtoNumber(7) val reason: Reason = Reason.UNSPECIFIED,
-    /** The node's setting is gone and the node goes by its parent's again. Never set for the global setting. */
+    /** Whether the node resumes its inherited setting. Default is false. Never true for the global setting. */
     @ProtoNumber(8) val dropped: Boolean = false,
 ) {
     @Serializable
@@ -194,9 +206,9 @@ public data class PaceDef(
         @ProtoNumber(1) CONFIG,
         /** A command of a live client. */
         @ProtoNumber(2) CONTROLLER,
-        /** The last controller went away, or there never could be one: back to what was configured, nothing paused. */
+        /** No controller remains or can connect. Restores the configured pace and clears all pauses. */
         @ProtoNumber(3) FAIL_OPEN,
-        /** The JVM is shutting down; everything that was held goes. */
+        /** JVM shutdown releases all holds. */
         @ProtoNumber(4) SHUTDOWN,
         /** The node that carried the setting has ended. */
         @ProtoNumber(5) NODE_FINISHED,
@@ -208,7 +220,7 @@ public enum class EventKind {
     @ProtoNumber(0) UNSPECIFIED,
     /** The node was created under observation. Carries [Event.node]. */
     @ProtoNumber(1) LAUNCHED,
-    /** The node already existed when the agent first saw it (e.g. the main thread). Carries [Event.node]. */
+    /** The node already existed when the agent reached it, such as the main thread. Carries [Event.node]. */
     @ProtoNumber(2) DISCOVERED,
     @ProtoNumber(3) CONTEXT_CHANGED,
     @ProtoNumber(4) DISPATCHER_CHANGED,
@@ -219,12 +231,12 @@ public enum class EventKind {
     @ProtoNumber(9) EXCEPTION_HANDLED,
     @ProtoNumber(10) CANCELLATION_REQUESTED,
     @ProtoNumber(11) CANCELLATION_PROPAGATED,
-    /** The job entered the cancelling state; [Event.exception] is the cause. */
+    /** The job entered the cancelling state. [Event.exception] is the cause. */
     @ProtoNumber(12) CANCELLING,
     @ProtoNumber(13) THREAD_BLOCKED,
     @ProtoNumber(14) THREAD_UNBLOCKED,
     @ProtoNumber(15) THREAD_INTERRUPTED,
-    /** End of the node's lifetime; see [Event.finalState]. */
+    /** End of the node's lifetime, with the outcome in [Event.finalState]. */
     @ProtoNumber(16) FINISHED,
 }
 
@@ -277,7 +289,7 @@ public enum class HandledBy {
     @ProtoNumber(0) UNSPECIFIED,
     @ProtoNumber(1) CATCH,
     @ProtoNumber(2) COROUTINE_EXCEPTION_HANDLER,
-    /** The exception stopped at a supervisor (`supervisorScope` / `SupervisorJob`) and did not cancel it. */
+    /** The exception stopped at a supervisor (`supervisorScope` / `SupervisorJob`) and didn't cancel it. */
     @ProtoNumber(3) SUPERVISOR,
     /** Stored in a `Deferred` until somebody awaits it. */
     @ProtoNumber(4) DEFERRED_HELD,
@@ -293,12 +305,12 @@ public enum class PropagationDirection {
 
 @Serializable
 public data class NodeInfo(
-    /** Unique within a trace, never reused. Starts at 1. */
+    /** Unique in a trace, never reused. Starts at 1. */
     @ProtoNumber(1) val id: Long = 0,
     @ProtoNumber(2) val kind: NodeKind = NodeKind.UNSPECIFIED,
     /** The source construct that created the node: `launch`, `withContext`, `Thread.start`, `Job()`, … */
     @ProtoNumber(3) val construct: String = "",
-    /** `CoroutineName` or thread name; empty when the node is anonymous. */
+    /** `CoroutineName` or thread name. Empty when the node is anonymous. */
     @ProtoNumber(4) val name: String = "",
     /** Structural parent (Job hierarchy / starting thread / owning pool), 0 for a root. */
     @ProtoNumber(5) val parentId: Long = 0,
@@ -308,7 +320,7 @@ public data class NodeInfo(
     @ProtoNumber(7) val siteFrame: Int = 0,
     @ProtoNumber(8) val origin: Origin = Origin.UNSPECIFIED,
     @ProtoNumber(9) val context: List<ContextElement> = emptyList(),
-    /** Runtime class implementing the node, e.g. `kotlinx.coroutines.StandaloneCoroutine`. */
+    /** Runtime class that implements the node, for example `kotlinx.coroutines.StandaloneCoroutine`. */
     @ProtoNumber(10) val implClass: String = "",
     @ProtoNumber(11) val thread: ThreadInfo? = null,
 )
@@ -335,9 +347,9 @@ public data class ContextElement(
     @ProtoNumber(1) val kind: ContextElementKind = ContextElementKind.UNSPECIFIED,
     /** Short well-known key (`Job`, `Dispatcher`, `CoroutineName`, `CoroutineExceptionHandler`) or the element's class name. */
     @ProtoNumber(2) val key: String = "",
-    /** `toString()` of the element, verbatim. Empty for the Job element: the node itself stands for it. */
+    /** The element's `toString()` value, verbatim. Empty for the Job element because the node identifies the job. */
     @ProtoNumber(3) val value: String = "",
-    /** The element is a `ThreadContextElement`, i.e. it touches thread state on every resume and suspend. */
+    /** Whether the element changes thread state on every resume and suspend as a `ThreadContextElement`. Default is false. */
     @ProtoNumber(4) val threadContextElement: Boolean = false,
 )
 

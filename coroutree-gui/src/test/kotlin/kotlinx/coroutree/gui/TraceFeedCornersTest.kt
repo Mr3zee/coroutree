@@ -60,7 +60,7 @@ class TraceFeedCornersTest {
      * says it is over": at the moment a terminal status is seen, the snapshot is the final one.
      */
     private fun TraceFeed.awaitEnd(expected: FeedStatus): TraceSnapshot = runBlocking {
-        val terminal = withTimeout(10_000) { status.first { it == FeedStatus.RECORDED || it == FeedStatus.ENDED || it == FeedStatus.FAILED } }
+        val terminal = withTimeout(10_000) { status.first { it.terminal } }
         val shown = snapshot.value
         assertEquals(expected, terminal, "failure: ${failure.value}")
         assertTrue(shown.complete, "the status said $terminal before the final snapshot was out")
@@ -180,7 +180,7 @@ class TraceFeedCornersTest {
         )
         for ((i, stranger) in strangers.withIndex()) {
             val snapshot = withServer(stranger) { server ->
-                TraceFeed(TraceSource.Session(session(server.localPort, recorded)), scope).awaitEnd(FeedStatus.RECORDED)
+                TraceFeed(TraceSource.Session(session(server.localPort, recorded)), scope).awaitEnd(FeedStatus.PARTIAL)
             }
             assertEquals(eventsWithin(bytes.size), snapshot.events.map { it.seq }, "stranger $i")
         }

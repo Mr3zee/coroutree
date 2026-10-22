@@ -6,14 +6,13 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Lifecycle of the capture and the path every event takes out of a hook. */
 public final class Tracer {
     private Tracer() {}
 
     /** Checked first by every hook. False until {@link #activate}, after the writer has failed, and during shutdown. */
     static volatile boolean active;
 
-    /** {@code -Dcoroutree.debug=true}: self-checks that cost something, and stack traces of internal errors. Tests run with it. */
+    /** Enables additional runtime checks and internal-error stack traces. Tests set -Dcoroutree.debug=true. */
     static final boolean DEBUG = Boolean.getBoolean("coroutree.debug");
 
     static AgentConfig config;
@@ -26,8 +25,7 @@ public final class Tracer {
     private static final Set<String> REPORTED = ConcurrentHashMap.newKeySet();
 
     /**
-     * Opens the trace and starts the agent's threads. Hooks stay inert until {@link #activate}, which the agent
-     * calls once the classes that were already loaded have been retransformed.
+     * Hooks stay inactive until {@link #activate}, after loaded classes have been retransformed.
      */
     public static synchronized void start(AgentConfig agentConfig) throws IOException {
         if (writer != null) throw new IllegalStateException("coroutree is already started");
@@ -37,34 +35,36 @@ public final class Tracer {
         File traceFile = agentConfig.resolveTraceFile(ProcessHandle.current().pid());
         writer = new TraceWriterThread(traceFile, agentConfig, startedAt);
         writer.start();
-        // From here on the gate exists or does not (Pace.GATE is made from the configuration the first time Pace is touched).
         final Pace gate = Pace.GATE;
         if (gate != null) gate.announce();
         if (agentConfig.live) {
             try {
-                live = new LiveServer(agentConfig, traceFile, startedAt, writer);
+                live = new LiveServer(writer);
                 live.start();
                 live.warmUp();
             } catch (IOException e) {
-                diagnostic(Wire.WARNING, "Live streaming is off, the trace file is still written: " + e);
+                diagnostic(Wire.WARNING, "The live socket failed to open, so no GUI can attach: " + e + ". The trace file is still written.");
                 if (gate != null && gate.liveUnavailable()) {
-                    diagnostic(Wire.WARNING, "The program was to start paused, but without the live socket nothing could ever resume it: it runs.");
+                    diagnostic(Wire.WARNING, "Ignored pace.paused: without the live socket no GUI can resume the program, so it runs.");
                 }
             }
         }
+        final SessionDescriptor descriptor = new SessionDescriptor(agentConfig, traceFile, startedAt, live);
+        descriptor.write(false);
         Pace.warmUp();
         for (String problem : agentConfig.problems) diagnostic(Wire.WARNING, problem);
         if (gate != null && gate.root.paused) {
-            System.err.println("coroutree: the program starts PAUSED and stays so until a coroutree GUI resumes or steps it (pace.paused)");
+            System.err.println("coroutree: the program starts paused (pace.paused). Resume or step it from a coroutree GUI.");
         }
 
         Thread shutdown = new AgentThread("coroutree-shutdown") {
             @Override
             public void run() {
-                active = false; // first: whoever is held at the gate goes, and a paused program exits on Ctrl-C with its trace complete
+                active = false; // release held threads before draining the trace
                 if (gate != null) gate.shutdown();
                 writer.shutdown();
                 if (live != null) live.shutdown(); // after the writer: live clients get the trace to its last byte
+                descriptor.write(true);
             }
         };
         shutdown.setDaemon(false);
@@ -95,9 +95,8 @@ public final class Tracer {
     static void emit(ThreadState ts, TraceEvent event) {
         long time = now();
         if (Pace.GATE != null) {
-            // Every hook passes the gate before it emits (and names the point, see Pace.await). One that does not would
-            // be a hook the user cannot stop the program at; said loudly, so that it cannot go unnoticed in a test.
-            if (!ts.awaited) reportInternalError("gate", new IllegalStateException("event of kind " + event.kind + " did not pass the gate"));
+            // A hook that skips await can't be paused at its event. Report it as an internal error so tests fail.
+            if (!ts.awaited) reportInternalError("gate", new IllegalStateException("event of kind " + event.kind + " didn't pass the gate"));
             if (ts.stepEmitted) {
                 event.sameStep = true;
             } else if (ts.releaseNanos != Pace.NEVER) {
@@ -112,7 +111,7 @@ public final class Tracer {
         writer.enqueue(event);
     }
 
-    /** A setting of the gate has changed. No sequence number: a setting is not something the program did. */
+    /** Settings have no sequence number because they aren't program events. */
     static void pace(TraceEvent.PaceDef def) {
         def.timeNanos = now();
         def.afterSeq = SEQ.get();
@@ -126,21 +125,19 @@ public final class Tracer {
     static volatile java.util.List<TraceEvent.PaceDef> paceSink;
 
     /**
-     * A bug in the agent must never become a bug in the application: hooks catch everything and report here.
-     * Each distinct problem is reported once.
+     * Must not throw into application code, even if error formatting fails. Reports each distinct problem only once.
      */
     static void reportInternalError(String what, Throwable error) {
         try {
             String key = what + ": " + describe(error);
             if (REPORTED.size() > 100 || !REPORTED.add(key)) return;
-            diagnostic(Wire.ERROR, "internal error, " + key);
+            diagnostic(Wire.ERROR, "internal error: " + key);
             if (DEBUG) error.printStackTrace();
         } catch (Throwable ignored) {
-            // This runs in the catch block of every hook: whatever happens here must not reach the application either.
         }
     }
 
-    /** The error may come out of application code (a toString, a hashCode) and have a toString of the same quality. */
+    /** Application exceptions can have a toString that also throws. */
     private static String describe(Throwable error) {
         try {
             return error.toString();
@@ -149,7 +146,6 @@ public final class Tracer {
         }
     }
 
-    /** The trace cannot be written any more. Hooks go quiet instead of doing work that is thrown away. */
     static void writerFailed(Throwable error) {
         active = false;
         LiveServer server = live;

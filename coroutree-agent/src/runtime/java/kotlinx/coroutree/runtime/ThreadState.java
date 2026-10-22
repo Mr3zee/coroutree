@@ -3,7 +3,7 @@ package kotlinx.coroutree.runtime;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** What the runtime knows about the current thread. Thread-confined, reached through a thread local. */
+/** Thread-confined state. */
 final class ThreadState {
     private static final ThreadLocal<ThreadState> LOCAL = new ThreadLocal<ThreadState>() {
         @Override
@@ -19,44 +19,37 @@ final class ThreadState {
     final Thread thread;
 
     /**
-     * Set while a hook runs. Hooks use the JDK and the JDK is instrumented, so without this a hook could observe,
-     * and recurse into, itself. Permanently set for threads that are not part of the picture, see the constructor.
+     * Prevents instrumented JDK calls inside hooks from recursively entering hooks.
+     * Permanently set for agent and DestroyJavaVM threads.
      */
     boolean inHook;
 
     /**
-     * A thread of the JVM itself (Signal Dispatcher, Reference Handler, Finalizer, the "SIGTERM handler" the dispatcher
-     * starts): it is in the picture like any thread, but the gate never holds it. It is not the program's, and the JVM
-     * needs it: held at a paused gate inside the Thread.start of the SIGTERM handler, the dispatcher would never
-     * deliver the signal, and a paused program could not be ended with Ctrl-C — nor asked for a thread dump.
+     * JVM system threads are traced but never held. Holding the Signal Dispatcher in Thread.start would block
+     * SIGTERM handling and thread dumps while the program is paused.
      */
     final boolean neverHeld;
 
-    /** Node of this thread; created on first use. */
+    /** Created on first use. */
     ThreadNode node;
-
-    // --- blocking calls in progress in the innermost unit ---
 
     /** Nesting depth of instrumented blocking methods: {@code Thread.join} waits with {@code Object.wait}, and so on. */
     int blockDepth;
-    /** Depth at which THREAD_BLOCKED was emitted, 0 if it was not. Only the outermost blocking call is reported. */
+    /** Depth at which THREAD_BLOCKED was emitted, or 0 without an event. Only the outermost blocking call is reported. */
     int blockEmittedAt;
     /** Coroutine named in the pending THREAD_BLOCKED, repeated in the matching THREAD_UNBLOCKED. */
     long blockOtherNodeId;
 
-    // --- the step this thread is making through the gate (Pace); all of it stays untouched without a gate ---
-
-    /** A hook call has passed the gate and not settled yet. {@link Tracer#emit} insists on it: no event without its await. */
+    /** An unsettled step passed the gate. {@link Tracer#emit} requires this before it records an event. */
     boolean awaited;
     /** The step has an event already: the next one of this hook call is part of the same step. */
     boolean stepEmitted;
-    /** When the gate let the step go, which becomes the time of its first event; {@link Pace#NEVER} if it went through an open gate. */
+    /** First event time, or {@link Pace#NEVER} if the step passed an open gate. */
     long releaseNanos = Pace.NEVER;
     /** How long this thread was held since its last event. Reported with its next event, whichever hook call that is in. */
     long heldNanos;
 
-    // What the step took, to be given back if it turns out to have nothing to report: the slots of its sequences with
-    // the times they held before, and the counters it took permits from.
+    // A step with no events must restore its sequence slots and permits.
     int claimedSlots;
     int claimedPermits;
     long claimTime;
@@ -73,13 +66,12 @@ final class ThreadState {
         claimPermit[claimedPermits++] = permits;
     }
 
-    /** The end of every hook: the step, if there was one, is settled, and the thread is the program's again. */
     void exitHook() {
         if (awaited) Pace.settle(this);
         inHook = false;
     }
 
-    // --- execution units running on this thread, innermost last, each with the blocking state of the unit below it ---
+    // Units are innermost last. Each entry saves the enclosing unit's blocking state.
 
     private static final int MAX_UNITS = 1024;
 
@@ -91,11 +83,10 @@ final class ThreadState {
 
     private ThreadState(Thread thread) {
         this.thread = thread;
-        // Besides the agent's own threads: the JVM's pseudo-thread that waits for the program to end and then runs the
-        // shutdown sequence. What it does is the JVM going down (and waiting for this agent's shutdown hook), not the program.
+        // DestroyJavaVM waits for shutdown hooks, so tracing its waits would record the agent's own shutdown work.
         this.inHook = thread instanceof AgentThread || "DestroyJavaVM".equals(thread.getName());
         ThreadGroup group = thread.getThreadGroup(); // null once the thread has terminated
-        this.neverHeld = group != null && group.getParent() == null; // the root group, "system": where the JVM keeps its own
+        this.neverHeld = group != null && group.getParent() == null; // JVM threads belong to the root "system" group
     }
 
     JobNode currentUnit() {
@@ -103,8 +94,7 @@ final class ThreadState {
     }
 
     /**
-     * A coroutine starts or continues on this thread. It gets its own blocking-call bookkeeping: a coroutine that
-     * sleeps inside {@code runBlocking}'s event loop is a blocking call of its own, not a detail of {@code runBlocking}.
+     * Each coroutine needs separate blocking state so its sleep inside {@code runBlocking} is reported independently.
      */
     void pushUnit(JobNode unit) {
         if (unitCount > 0 && units[unitCount - 1] == unit) return;
@@ -119,7 +109,7 @@ final class ThreadState {
         blockOtherNodeId = 0;
     }
 
-    /** The unit suspended or finished its code: it, and everything started undispatched on top of it, is off this thread. */
+    /** Removes the unit and any undispatched units nested inside it, then restores the enclosing unit's blocking state. */
     void popUnit(JobNode unit) {
         int index = unitCount - 1;
         while (index >= 0 && units[index] != unit) index--;
@@ -133,7 +123,7 @@ final class ThreadState {
 
     private void grow() {
         if (units.length >= MAX_UNITS) {
-            // Nesting this deep is not a program, it is entries that were never popped. Forget the oldest half.
+            // Bound memory use if unmatched entries accumulate.
             int keep = unitCount / 2;
             int from = unitCount - keep;
             System.arraycopy(units, from, units, 0, keep);

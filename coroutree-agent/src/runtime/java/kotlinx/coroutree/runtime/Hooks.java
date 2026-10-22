@@ -8,23 +8,16 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
 
 /**
- * Entry points called by instrumented code. The agent's transformers (kotlinx.coroutree.agent.HookTable) say which
- * method of which class calls which hook; this class says what the call means.
- *
- * Every hook has the same shape: bail out if tracing is off or if this thread is already inside a hook, do the
- * work, and swallow whatever goes wrong. Arguments are typed {@code Object} because this class is loaded by the
- * bootstrap loader and cannot name Kotlin types.
- *
- * The work has an order, because a hook is where the program can be held ({@link Pace}, DESIGN §3.1):
+ * Hooks must suppress recursive entry and catch every failure. The bootstrap loader can't resolve Kotlin types,
+ * so arguments use {@code Object}.
+ * A hook must follow this order because execution control can hold the thread ({@link Pace}, DESIGN §3.1):
  * <ol>
- * <li>find everybody the step is about. Finding a node may report it ({@link #discover}, {@link #threadNode},
- *     {@link #poolOf}), which is a step of its own and passes the gate itself, so all of it comes first;</li>
- * <li>{@code Pace.await}: the one place where the thread may be held;</li>
- * <li>only then read what is reported, decide, lock, emit.</li>
+ * <li>Find all nodes involved. {@link #discover}, {@link #threadNode}, and {@link #poolOf} can emit separate steps.</li>
+ * <li>Call {@code Pace.await}.</li>
+ * <li>Read shared state, decide, lock, and emit.</li>
  * </ol>
- * What a hook looks at before its {@code await} are its arguments, state that only this thread changes, and peeks
- * that save the thread from being held for a step with nothing to report; whatever a peek found is decided again
- * after the hold. {@link Tracer#emit} refuses, loudly, an event of a hook call that has not passed the gate.
+ * Before await, read only arguments, thread-confined state, and preliminary checks that can avoid an empty step.
+ * Repeat preliminary checks after the hold. {@link Tracer#emit} reports events that bypass await as internal errors.
  */
 public final class Hooks {
     private Hooks() {}
@@ -39,9 +32,6 @@ public final class Hooks {
         return unit != null ? unit : threadNode(ts);
     }
 
-    // ------------------------------------------------------------------ coroutines: structure
-
-    /** End of the {@code AbstractCoroutine} constructor: a coroutine, scope or context change came to be. */
     public static void coroutineCreated(Object coroutine, Object parentContext, Object context) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -59,7 +49,6 @@ public final class Hooks {
         }
     }
 
-    /** End of the {@code JobImpl} constructor: {@code Job()}, {@code SupervisorJob()}, the job of a {@code CoroutineScope()}. */
     public static void jobCreated(Object job, Object parent) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -78,10 +67,8 @@ public final class Hooks {
 
     private static void createJobNode(ThreadState ts, KotlinAccess access, Tagged job, Tagged parent, Object context) throws Throwable {
         ClassInfo info = ClassInfo.of(job.getClass());
-        // The node may be there already: a job attaches to its parent inside its constructor, and a parent that is
-        // cancelled or done cancels it right then, before this hook at the end of the constructor. Whoever needed
-        // the node first made it, without a definition; the definition is what this hook adds. The tag is published
-        // before anything slow happens, for the same reason: the job is already reachable through its parent.
+        // A cancelled parent can emit cancellation events from the child's constructor before this hook defines the child.
+        // Publish the tag before slow work because the parent already exposes the job to other threads.
         JobNode node = obtainNode(job, info);
         if (node.defined) return;
         JobNode parentNode = parent == null ? null : nodeOf(parent, ts);
@@ -92,7 +79,7 @@ public final class Hooks {
         // Scopes (withContext to another dispatcher included) and runBlocking run in their caller's place.
         boolean calledInPlace = info.scoped || info.blocking;
         if (Pace.GATE != null) {
-            // Its place in the structure is known before the gate: a child of a paused subtree is held at its own "launched".
+            // Set ancestry before await so a paused subtree also holds a new child's launch.
             node.paceParent = parentNode != null ? parentNode : calledInPlace ? creatorNode : null;
             if (calledInPlace) node.caller = creatorNode;
         }
@@ -104,18 +91,15 @@ public final class Hooks {
 
         TraceEvent.NodeDef def = new TraceEvent.NodeDef();
         def.id = node.id;
-        // withContext that does not change the dispatcher runs in an ordinary scope coroutine; it is still a context change.
+        // withContext is a context change even when an unchanged dispatcher uses an ordinary scope coroutine.
         def.kind = construct.equals("withContext") ? Wire.KIND_CONTEXT_CHANGE : info.kind;
         def.construct = construct;
         def.implClass = job.getClass().getName();
-        // Without a parent job we know of, runBlocking and scopes still have a place in the structure: under whoever
-        // called them and waits for them. (withContext(NonCancellable) is such a scope: its parent is not a real job.)
+        // A scope without a known parent job belongs under its waiting caller, including withContext(NonCancellable).
         def.parentId = parentNode != null ? parentNode.id : calledInPlace ? creator : 0;
         def.creatorId = creator;
         setSite(def, stack, site);
 
-        // What the node's context is compared with: its parent's, or for a scope without a parent node its caller's,
-        // which is where a scope's context comes from.
         ContextEntry[] parentContext = parentNode != null ? parentNode.context : info.scoped && unit != null ? unit.context : null;
         if (context != null) {
             ArrayList<ContextEntry> entries = new ArrayList<>();
@@ -124,14 +108,13 @@ public final class Hooks {
                 ContextEntry entry = inherited != null ? inherited : access.describe(element);
                 if (entry == null) continue;
                 entries.add(entry);
-                // Only a name the node was given itself. An inherited one is its parent's name, and a tree where every
-                // descendant of "server" is titled "server" says less than one where they are anonymous.
+                // An inherited CoroutineName names the parent, not this node.
                 if (inherited == null && entry.kind == Wire.CTX_NAME) def.name = entry.value;
             }
             node.context = entries.toArray(new ContextEntry[0]);
             def.context = node.context;
         } else {
-            node.context = parentContext; // a plain Job has no context of its own; children diff against the grandparent
+            node.context = parentContext; // a plain Job has no context, so children compare against the grandparent
         }
 
         if (node.startsUndispatched) {
@@ -141,7 +124,6 @@ public final class Hooks {
             }
         }
         if (calledInPlace) {
-            // They do not report a failure to their parent job; they throw it at whoever called them.
             node.rethrowsToId = creator;
             node.rethrowsTo = unit;
         }
@@ -162,7 +144,6 @@ public final class Hooks {
         return null;
     }
 
-    /** CONTEXT_CHANGED for everything but the dispatcher, DISPATCHER_CHANGED for the dispatcher; the Job is not news. */
     private static void emitContextDiff(ThreadState ts, JobNode node, ThreadNode thread, ContextEntry[] before) {
         ArrayList<TraceEvent.ContextChangeDef> general = new ArrayList<>();
         TraceEvent.ContextChangeDef dispatcher = null;
@@ -209,7 +190,6 @@ public final class Hooks {
         return change;
     }
 
-    /** The node of a job, made on first demand. Publishing the tag under a lock keeps it to one node per job. */
     private static JobNode obtainNode(Tagged job, ClassInfo info) {
         Object tag = job.coroutree$tag();
         if (tag != null) return (JobNode) tag;
@@ -223,8 +203,8 @@ public final class Hooks {
     }
 
     /**
-     * The node of a job that something happened to. A job of a class whose constructor is hooked gets its definition
-     * from that hook, even if this is called first (see {@link #createJobNode}); any other job is DISCOVERED here.
+     * Hooked constructors define their nodes through {@link #createJobNode}, even if this method runs first.
+     * Other jobs are discovered here.
      */
     private static JobNode nodeOf(Tagged job, ThreadState ts) {
         ClassInfo info = ClassInfo.of(job.getClass());
@@ -233,7 +213,6 @@ public final class Hooks {
         return node;
     }
 
-    /** A step of its own, whichever hook came across the job: it passes the gate before the lock its decision is made under. */
     private static void discover(Tagged job, JobNode node, ClassInfo info, ThreadState ts) {
         ThreadNode thread = threadNode(ts);
         JobNode unit = ts.currentUnit();
@@ -262,18 +241,14 @@ public final class Hooks {
         }
     }
 
-    /** The node has ended: a setting of the gate on it is dropped, and it lets go of whom it hung under. */
     private static void ended(JobNode node) {
         if (Pace.GATE == null) return;
         Pace.nodeFinished(node);
-        // A job ends after its children and a callee before its caller: nobody looks up through this node any more.
+        // Children finish before their job, and callees before their caller. No remaining node needs this ancestry.
         node.paceParent = null;
         node.caller = null;
     }
 
-    // ------------------------------------------------------------------ coroutines: suspend and resume
-
-    /** {@code probeCoroutineResumed}: a continuation frame of some coroutine is about to run on this thread. */
     public static void coroutineResumed(Object frame, Object context) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -288,22 +263,20 @@ public final class Hooks {
                 runningHere = node.run == JobNode.RUNNING && node.runThread == tid;
             }
             if (runningHere) {
-                // The probe fires for every frame as a suspend call chain unwinds: nothing to report, nothing to be held for.
+                // Each frame emits a resume probe, but frames of the same running coroutine don't create separate steps.
                 ts.pushUnit(node);
                 return;
             }
             long thread = threadNode(ts).id;
-            // The coroutine's own step, in its own flow. It is not on this thread's books yet, and if the thread stood
-            // in for it, the ten children of a single-threaded runBlocking would be spaced against each other.
+            // Await as the coroutine before pushUnit. Using the thread would serialize sibling coroutines on that thread.
             Pace.await(ts, node, node, null);
-            // A peek without the lock, to do the expensive part outside of it; the decision is made under the lock.
+            // Capture the stack outside the lock, then recheck the state under the lock.
             StackFrameRef[] suspendedAt = node.run == JobNode.RUNNING && node.runThread != tid ? suspensionStack(frame) : null;
             synchronized (node) {
                 if (node.run != JobNode.RUNNING || node.runThread != tid) {
                     if (node.run == JobNode.RUNNING) {
-                        // Running on another thread by our books: it suspended there and was resumed here before
-                        // that thread got to say so. Say it for that thread, and ignore its report when it comes.
-                        // Where it was suspended is no secret either: it is the frame that is being resumed.
+                        // Resume can arrive before the other thread's suspend probe. Record that suspension from this frame
+                        // and ignore the late probe.
                         node.lateSuspends++;
                         TraceEvent suspended = new TraceEvent(node.id, Wire.SUSPENDED, thread);
                         suspended.stack = suspendedAt != null ? suspendedAt : suspensionStack(frame);
@@ -322,7 +295,6 @@ public final class Hooks {
         }
     }
 
-    /** {@code probeCoroutineSuspended}: the coroutine that owns {@code frame} is leaving this thread. */
     public static void coroutineSuspended(Object frame, Object context) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -343,10 +315,9 @@ public final class Hooks {
             long thread = threadNode(ts).id;
             StackFrameRef[] stack = null;
             if (!reportedAlready) {
-                // Like the resume, the coroutine's own step. Whoever resumes it elsewhere meanwhile waits for the same
-                // node, so the frame still says where it was suspended when this thread gets to read it.
+                // A concurrent resume awaits the same node, so the suspension frame remains valid for this read.
                 Pace.await(ts, node, node, null);
-                // Reading debug metadata runs library code and may load classes: not something to do holding a lock.
+                // Debug metadata access can load classes, so read it outside the lock.
                 stack = suspensionStack(frame);
             }
             synchronized (node) {
@@ -385,20 +356,13 @@ public final class Hooks {
         return job != null ? nodeOf(job, ts) : joblessNode(access, frame, null);
     }
 
-    // ------------------------------------------------------------------ coroutines without a Job
-
     /**
-     * Coroutines of the bare standard library ({@code suspend fun main}, {@code startCoroutine}, {@code createCoroutine}),
-     * by their root frame: the continuation the coroutine was created as, which every frame above it leads to.
-     * What the coroutine completes into does not identify it: nothing keeps a program from starting a hundred
-     * coroutines with one and the same completion object.
+     * Jobless coroutines are keyed by root frame. A completion object can't identify a coroutine because several coroutines can share it.
      */
     private static final WeakIdentityMap<Object, JobNode> JOBLESS = new WeakIdentityMap<>();
 
     /**
-     * End of {@code createCoroutineUnintercepted}, which everything that creates a coroutine goes through. Most of what
-     * comes by belongs to a Job and is known already; what is left is a node of its own, generators excepted:
-     * for {@code sequence {}} to suspend at every {@code yield} is how it returns a value, not something that happens to it.
+     * Excludes coroutines with known Jobs and generators. A generator's yield produces a value, not a concurrency event.
      */
     public static void continuationCreated(Object continuation) {
         if (!Tracer.active) return;
@@ -417,13 +381,11 @@ public final class Hooks {
             JobNode unit = ts.currentUnit();
             PaceNode creatorNode = unit != null ? unit : thread;
             long creator = creatorNode.id;
-            // Before the gate, for once: what the construct is decides where the node hangs, which the gate has to
-            // know. A stack does not change while its thread is held.
+            // Capture before await because the construct determines ancestry. This thread's stack can't change during the hold.
             StackFrameRef[] stack = StackCapture.captureForSite();
             int site = StackCapture.siteIndex(stack);
             String construct = StackCapture.construct(stack, site, "startCoroutine");
-            // suspend fun main is to its thread what runBlocking is: the thread waits for it and gets its failure.
-            // Anything else was started and left to itself, which is what a root is.
+            // The thread waits for suspend main and receives its failure. Other jobless coroutines are independent roots.
             boolean suspendMain = construct.equals(StackCapture.SUSPEND_MAIN);
             if (suspendMain && Pace.GATE != null) {
                 node.paceParent = creatorNode;
@@ -435,7 +397,6 @@ public final class Hooks {
             def.id = node.id;
             def.kind = Wire.KIND_COROUTINE;
             def.construct = construct;
-            // What stands where a kotlinx.coroutines coroutine has its Job: the continuation it completes into.
             Object completion = access.completionOf(continuation);
             def.implClass = completion == null ? "" : completion.getClass().getName();
             def.creatorId = creator;
@@ -472,8 +433,7 @@ public final class Hooks {
     }
 
     /**
-     * In {@code BaseContinuationImpl.resumeWith}, where the last frame of a coroutine hands the result to what the
-     * coroutine was started with. {@code frame} is where that run of the coroutine began, any frame of it.
+     * {@code frame} can be any frame where this run of the coroutine began, not necessarily its root.
      */
     public static void continuationCompleted(Object completion, Object result, Object frame) {
         if (!Tracer.active) return;
@@ -486,9 +446,9 @@ public final class Hooks {
             JobNode node = joblessNode(access, frame, completion);
             if (node == null || node.finished) return;
             long thread = threadNode(ts).id;
-            // There is no Job, so there is no cancellation either: a CancellationException is an exception like any other.
+            // Without a Job, CancellationException is a failure rather than cancellation.
             Throwable failure = access.failureOfResult(result);
-            PaceNode unit = unitOn(ts); // before the coroutine is taken off this thread's books: it is its own last step
+            PaceNode unit = unitOn(ts); // capture the unit before popUnit
             Pace.await(ts, unit, node, failure != null ? node.caller : null);
             if (node.finished) return;
             node.finished = true;
@@ -519,10 +479,8 @@ public final class Hooks {
     }
 
     /**
-     * Down the chain of frames to the root frame of a jobless coroutine that is known. Compiled frames lead on with
-     * their completion. A frame that completes into something else is a root frame, ours or not; if not, there may
-     * still be a way on ({@code SafeCollector} of a flow is such a frame: it keeps its real caller to itself and says
-     * so as a {@code CoroutineStackFrame}). With {@code into}, only a coroutine that completes into it will do.
+     * Follows completion links to a known root. CoroutineStackFrame can expose a caller hidden by wrappers such as SafeCollector.
+     * A nonnull {@code into} restricts the match to a coroutine that completes into that object.
      */
     private static JobNode joblessNode(KotlinAccess access, Object frame, Object into) throws Throwable {
         if (JOBLESS.isEmpty() || access.isGeneratorFrame(frame)) return null;
@@ -547,9 +505,6 @@ public final class Hooks {
         return null;
     }
 
-    // ------------------------------------------------------------------ coroutines: cancellation
-
-    /** {@code Job.cancel(cause)}: somebody asked for cancellation explicitly. */
     public static void cancelRequested(Object job, Throwable cause) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -576,7 +531,6 @@ public final class Hooks {
         }
     }
 
-    /** {@code JobSupport.parentCancelled}: the parent is cancelling and takes this child along. */
     public static void parentCancelled(Object child, Object parent) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -585,7 +539,7 @@ public final class Hooks {
         try {
             if (!(child instanceof Tagged c) || !(parent instanceof Tagged p)) return;
             JobNode node = nodeOf(c, ts);
-            if (node.finished || node.cancelling) return; // e.g. the failed child that made the parent cancel in the first place
+            if (node.finished || node.cancelling) return; // can be the failed child that caused the parent's cancellation
             JobNode parentNode = nodeOf(p, ts);
             ThreadNode thread = threadNode(ts);
             JobNode unit = ts.currentUnit();
@@ -602,7 +556,6 @@ public final class Hooks {
         }
     }
 
-    /** {@code JobSupport.notifyCancelling}: the job entered the cancelling state, for whatever reason. */
     public static void cancelling(Object job, Throwable cause) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -627,9 +580,6 @@ public final class Hooks {
         }
     }
 
-    // ------------------------------------------------------------------ coroutines: exceptions and completion
-
-    /** {@code JobSupport.makeCompletingOnce}: the body of the coroutine is over, with a result or with an exception. */
     public static void completing(Object job, Object proposedUpdate) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -641,10 +591,10 @@ public final class Hooks {
             JobNode node = nodeOf(tagged, ts);
             Throwable failure = access.failureOf(proposedUpdate);
             boolean thrown = failure != null && !(failure instanceof CancellationException)
-                && !node.isRethrowOfReceived(failure); // came out of a scope it called; already recorded as propagated
-            // Whose step it is, is asked while the body that is over is still on this thread's books.
+                && !node.isRethrowOfReceived(failure); // scope failures are already recorded as propagated
+            // Capture the execution unit before popUnit removes it.
             PaceNode unit = thrown ? unitOn(ts) : null;
-            // Its code is done with this thread even if the job now waits for children and completes elsewhere.
+            // The body has left this thread even if the job later completes elsewhere after its children.
             ts.popUnit(node);
             if (!thrown) return;
             long thread = threadNode(ts).id;
@@ -660,7 +610,7 @@ public final class Hooks {
         }
     }
 
-    /** {@code JobSupport.completeStateFinalization}: the job reached its final state. Runs exactly once per job. */
+    /** Runs exactly once for each job. */
     public static void completed(Object job, Object finalState) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -674,9 +624,8 @@ public final class Hooks {
             long thread = threadNode(ts).id;
             Throwable failure = access.failureOf(finalState);
             boolean failed = failure != null && !(failure instanceof CancellationException);
-            PaceNode unit = unitOn(ts); // before the node is taken off this thread's books
-            // "Propagated to the caller" lands on the caller. That is the scope's own flow when the scope ends where it
-            // ran, but a scope may end on the thread of its last child, and then it is another sequence to keep a distance in.
+            PaceNode unit = unitOn(ts); // capture the unit before popUnit
+            // A scope can finish on its last child's thread. Await the caller too before emitting propagation on it.
             Pace.await(ts, unit, node, failed && node.rethrowsToId != 0 ? node.caller : null);
             if (node.finished) return;
             node.finished = true;
@@ -708,16 +657,15 @@ public final class Hooks {
         }
     }
 
-    /** Start of {@code ChildHandleNode.childCancelled}: a failing child tells its parent. */
     public static void childCancelled(Object child, Object parent, Throwable cause) {
-        if (!Tracer.active || cause instanceof CancellationException) return; // a cancelled child does not concern the parent
+        if (!Tracer.active || cause instanceof CancellationException) return; // child cancellation doesn't cancel its parent
         ThreadState ts = ThreadState.current();
         if (ts.inHook) return;
         ts.inHook = true;
         try {
             if (!(child instanceof Tagged c) || !(parent instanceof Tagged p)) return;
             JobNode childNode = nodeOf(c, ts);
-            if (childNode.hasPropagated(cause)) return; // the library reports to the parent twice: when cancelling and when final
+            if (childNode.hasPropagated(cause)) return;
             JobNode parentNode = nodeOf(p, ts);
             ThreadNode thread = threadNode(ts);
             JobNode unit = ts.currentUnit();
@@ -735,7 +683,6 @@ public final class Hooks {
         }
     }
 
-    /** End of {@code ChildHandleNode.childCancelled}: {@code handled} is the parent's answer. */
     public static void childCancelledResult(boolean handled, Object child, Object parent, Throwable cause) {
         if (!Tracer.active || handled || cause instanceof CancellationException) return;
         ThreadState ts = ThreadState.current();
@@ -744,8 +691,7 @@ public final class Hooks {
         try {
             if (!(child instanceof Tagged c) || !(parent instanceof Tagged p)) return;
             JobNode parentNode = nodeOf(p, ts);
-            // "Not handled" has two meanings. A parent that went down with the child just has nobody to report the
-            // exception to (the child's own handler is next). A parent that is unaffected is a supervisor.
+            // An unhandled failure indicates a supervisor only if the parent remains active.
             if (parentNode.cancelling || parentNode.finished) return;
             JobNode childNode = nodeOf(c, ts);
             if (childNode.hasStopped(cause)) return;
@@ -766,7 +712,6 @@ public final class Hooks {
         }
     }
 
-    /** {@code handleCoroutineException}: the exception reached the end of the line for coroutines. */
     public static void exceptionReachedHandler(Object context, Throwable exception) {
         if (!Tracer.active) return;
         ThreadState ts = ThreadState.current();
@@ -815,8 +760,6 @@ public final class Hooks {
         }
     }
 
-    // ------------------------------------------------------------------ threads: lifecycle
-
     /** {@code Thread.start}, on the starting thread. */
     public static void threadStart(Thread thread) {
         if (!Tracer.active || thread instanceof AgentThread) return;
@@ -829,7 +772,7 @@ public final class Hooks {
             PaceNode creatorNode = unit != null ? unit : starter;
             long creator = creatorNode.id;
 
-            // The node may exist, undefined, if the thread was heard of before it was started (see threadNode).
+            // A thread interrupted before start can already have an undefined node.
             ThreadNode node = THREADS.get(thread);
             if (node == null) {
                 node = new ThreadNode(Tracer.newNodeId());
@@ -839,8 +782,7 @@ public final class Hooks {
             if (node.defined) return; // a virtual thread passes through two instrumented start methods
             PoolNode pool = poolOf(ts, thread, creatorNode, starter);
             if (Pace.GATE != null) node.paceParent = pool != null ? pool : starter;
-            // Inside Thread.start: the starter may own the monitor of the Thread. Whoever wants it waits as for any
-            // slow thread; the release of this one waits for nobody.
+            // The starter can own the Thread monitor here. Releasing a hold must not require another thread's progress.
             Pace.await(ts, creatorNode, node, null);
             synchronized (node) {
                 if (node.defined) return;
@@ -850,7 +792,7 @@ public final class Hooks {
             TraceEvent.NodeDef def = threadDef(node, thread);
             def.creatorId = creator;
             if (pool != null) {
-                // Which thread happened to make the pool grow is an accident, and so is the line it was at.
+                // Worker creation sites depend on pool scheduling and don't identify project thread creation.
                 def.parentId = pool.id;
                 def.construct = "worker";
                 def.origin = Wire.ORIGIN_LIBRARY;
@@ -861,8 +803,7 @@ public final class Hooks {
                 if (StackCapture.startedDirectlyBySite(stack, site)) {
                     def.construct = StackCapture.construct(stack, site, "Thread.start");
                 } else {
-                    // Started by a runtime as a side effect of whatever the site called (a timer thread behind delay,
-                    // an executor growing): the site is worth showing, but this is not a thread the project made.
+                    // Runtime-created threads can have a project call site without being project-created threads.
                     def.construct = "Thread.start";
                     def.origin = Wire.ORIGIN_LIBRARY;
                 }
@@ -894,13 +835,12 @@ public final class Hooks {
             TraceEvent event = new TraceEvent(node.id, Wire.FINISHED, node.id);
             event.finalState = node.failed ? Wire.STATE_FAILED : Wire.STATE_COMPLETED;
             Tracer.emit(ts, event);
-            // A thread cannot end inside a blocking call. If the books say it does, an enter went without its exit: the
-            // kind of damage a hold could do (it sleeps inside hooks, and sleep is hooked) and must never do.
+            // A thread can't end inside a blocking call. Nonzero depth indicates unbalanced hooks, possibly from an agent hold.
             if (Tracer.DEBUG && (ts.blockDepth != 0 || ts.blockEmittedAt != 0)) {
                 Tracer.reportInternalError("blocking calls of " + thread.getName(),
                     new IllegalStateException("unbalanced at the end of the thread: depth " + ts.blockDepth + ", reported at " + ts.blockEmittedAt));
             }
-            // Its setting goes; its place in the structure stays, for the threads it started live on below it.
+            // Remove the setting but retain ancestry because child threads can outlive this thread.
             Pace.nodeFinished(node);
         } catch (Throwable e) {
             Tracer.reportInternalError("threadExit", e);
@@ -966,9 +906,8 @@ public final class Hooks {
     }
 
     /**
-     * The node of a thread, DISCOVERED here if its start was not seen (main, JVM threads). A thread that has not been
-     * started yet — interrupting one is legal — is left undefined: its start will be seen, and LAUNCHED defines it.
-     * Discovering is a step of its own and passes the gate before its decision.
+     * Threads first seen after start are discovered here. Unstarted threads stay undefined until their launch hook runs.
+     * Discovery is a separate step that passes the gate before the decision.
      */
     private static ThreadNode threadNode(ThreadState ts, Thread thread, long reportingThread) {
         ThreadNode node = THREADS.get(thread);
@@ -1007,8 +946,7 @@ public final class Hooks {
     }
 
     /**
-     * The pool a worker thread belongs to, {@code null} if it is not a pool worker this agent knows how to recognise.
-     * The first worker of a pool brings the pool along: a step of its own, of the thread that made the pool grow.
+     * The first worker defines its pool in a separate step of the thread that expanded the pool.
      */
     private static PoolNode poolOf(ThreadState ts, Thread thread, PaceNode creatorNode, ThreadNode starter) {
         Object pool = null;
@@ -1034,8 +972,7 @@ public final class Hooks {
         PoolNode node = new PoolNode(Tracer.newNodeId());
         known = POOLS.putIfAbsent(pool, node);
         if (known != null) return known;
-        // Who reports the pool is settled; a worker that another thread starts meanwhile refers to a node that is
-        // defined a moment later, which readers are used to.
+        // A concurrent worker can reference this pool before its definition. Readers support references before definitions.
         Pace.await(ts, creatorNode, node, null);
         TraceEvent.NodeDef def = new TraceEvent.NodeDef();
         def.id = node.id;
@@ -1051,8 +988,7 @@ public final class Hooks {
     }
 
     /**
-     * Start of {@code ApplicationShutdownHooks.runHooks}: the JVM is on its way down and is about to start the shutdown
-     * hooks, ours among them. The gate opens now, not when our hook gets to run. No event, so no {@code await}.
+     * Opens the gate before the JVM starts any shutdown hook. Emits no event and needs no await.
      */
     public static void shutdownBegins() {
         try {
@@ -1063,15 +999,10 @@ public final class Hooks {
         }
     }
 
-    // ------------------------------------------------------------------ threads: blocking
-
     /**
-     * Start of an instrumented blocking method; {@code reason} is a {@code Wire.BLOCK_*} constant. Blocking methods
-     * call each other ({@code join} waits with {@code wait}, {@code sleep} on a virtual thread parks), so only the
-     * outermost one of a unit is reported. The depth is kept even when nothing is reported: every enter has an exit.
-     *
-     * The gate's own sleep comes by here too, and by {@link #blockExit}, with {@code inHook} set: both return before
-     * they touch the depth, so the hold is not a blocking call and leaves the books as they were.
+     * Reports only the outermost blocking call of each unit. Every enter must have a matching exit, including unreported calls.
+     * Agent holds enter both hooks with {@code inHook} set. Neither hook can change the depth for those holds.
+     * @param reason a {@code Wire.BLOCK_*} constant
      */
     public static void blockEnter(int reason) {
         if (!Tracer.active) return;
@@ -1084,8 +1015,7 @@ public final class Hooks {
             if (reason == Wire.BLOCK_PARK && isRuntimeHousekeeping(StackCapture.capture(8))) return;
             ThreadNode thread = threadNode(ts);
             JobNode unit = ts.currentUnit();
-            // Held before it blocks: inside park, sleep, wait (owning the monitor it is about to wait on) or, called
-            // from the JVMTI probe, in front of a contended monitor.
+            // Await before blocking. Object.wait still owns its monitor here, and the JVMTI probe hasn't acquired the contended monitor.
             Pace.await(ts, unit != null ? unit : thread, thread, null);
             ts.blockEmittedAt = ts.blockDepth;
             ts.blockOtherNodeId = unit != null ? unit.id : 0;
@@ -1101,14 +1031,14 @@ public final class Hooks {
         }
     }
 
-    /** Reading standard input blocks for as long as the user likes; reading a file does not count as blocking. */
+    /** Only standard input reads count as blocking I/O events. */
     public static void blockEnterIfStdin(Object stream) {
         boolean stdin = false;
         try {
             stdin = stream instanceof FileInputStream in && in.getFD() == FileDescriptor.in;
         } catch (Throwable ignored) {
         }
-        // Not blocking still enters, unreported: the exit hook cannot tell and will decrement.
+        // File reads still enter without a report because the exit hook always decrements the depth.
         blockEnter(stdin ? Wire.BLOCK_IO : NOT_REPORTED);
     }
 
@@ -1125,8 +1055,7 @@ public final class Hooks {
             if (ts.blockEmittedAt == ts.blockDepth) {
                 ThreadNode thread = threadNode(ts);
                 JobNode unit = ts.currentUnit();
-                // Held after it woke up, with whatever it woke up owning. An interrupt that ended the blocking call is
-                // in the flag or on its way as an exception; either way it is there when the thread goes on.
+                // Await after wake-up, with any reacquired locks. The hold must preserve the interrupt flag or pending exception.
                 Pace.await(ts, unit != null ? unit : thread, thread, null);
                 ts.blockEmittedAt = 0;
                 TraceEvent event = new TraceEvent(thread.id, Wire.THREAD_UNBLOCKED, thread.id);
@@ -1142,8 +1071,8 @@ public final class Hooks {
     }
 
     /**
-     * A park made by kotlinx.coroutines itself is a dispatcher worker or an event loop waiting for work. That is the
-     * thread being idle, not something blocking it. ({@code runBlocking} is reported separately, as such.)
+     * Dispatcher workers and event loops park while idle, so those parks aren't reported as blocking.
+     * runBlocking has a separate blocking event.
      */
     private static boolean isRuntimeHousekeeping(StackFrameRef[] top) {
         for (StackFrameRef frame : top) {

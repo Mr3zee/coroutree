@@ -70,7 +70,7 @@ fun EventLogPane(viewModel: TraceViewModel, live: Boolean, modifier: Modifier = 
 
     Column(modifier.background(palette.surface)) {
         PaneHeader("Event log") {
-            if (live) Label(if (follow) "following" else "paused — scroll to the end to follow", style = Type.small, color = palette.textDim)
+            if (live) Label(if (follow) "following" else "paused. Scroll to the end to follow.", style = Type.small, color = palette.textDim)
             Spacer(Modifier.width(12.dp))
             Label("${events.size} events", style = Type.small, color = palette.textDim)
         }

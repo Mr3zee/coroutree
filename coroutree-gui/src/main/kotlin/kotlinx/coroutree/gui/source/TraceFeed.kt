@@ -33,27 +33,31 @@ import java.io.OutputStream
 enum class FeedStatus(val label: String) {
     CONNECTING("connecting"),
 
-    /** Attached to a running JVM. */
     LIVE("live"),
 
-    /** Reading a file. */
     LOADING("loading"),
     RECORDED("recorded"),
 
-    /** Was live; the JVM exited or the connection dropped. */
+    /** The JVM exited or the live connection closed. */
     ENDED("ended"),
-    FAILED("failed"),
+
+    /** The user disconnected. The JVM runs on and the captured trace stays on screen. */
+    DISCONNECTED("disconnected"),
+
+    /** Read from the file of a session that isn't over: the JVM runs without a socket, or crashed. Everything up to the last flush. */
+    PARTIAL("partial"),
+    FAILED("failed");
+
+    /** Nothing more arrives. */
+    val terminal: Boolean
+        get() = when (this) {
+            CONNECTING, LIVE, LOADING -> false
+            RECORDED, ENDED, DISCONNECTED, PARTIAL, FAILED -> true
+        }
 }
 
 /**
- * Reads a [TraceSource] in the background and publishes what it has folded so far.
- *
- * Snapshots go out at most every [publishIntervalMillis] however fast frames arrive: a snapshot costs a copy of the
- * node map, and nobody can watch more than a few updates a second anyway.
- *
- * While it is attached to a running JVM the feed is also the way to it: [send] writes a command of execution control to
- * the same socket the trace comes from. Nothing comes back for a command but the trace itself, which says what the
- * agent's gate is set to from then on.
+ * Publishes snapshots periodically to limit node-map copies, regardless of the frame arrival rate.
  */
 class TraceFeed(
     val source: TraceSource,
@@ -71,7 +75,6 @@ class TraceFeed(
     val status: StateFlow<FeedStatus> get() = _status
     val failure: StateFlow<String?> get() = _failure
 
-    // Where commands go while the feed is live: the socket of the session, or the stand-in gate of the demo.
     private val commandLock = Any()
     @Volatile
     private var commands: OutputStream? = null
@@ -79,14 +82,13 @@ class TraceFeed(
     private var demoGate: DemoGate? = null
 
     /**
-     * Sends a command of execution control to the JVM this feed follows. Does nothing when there is no JVM at the other
-     * end (a recorded trace, a session that has ended); whether the JVM has a gate at all is for the caller to know
-     * from the trace header.
+     * The caller must check the trace header for execution-control support.
+     * Does nothing for recorded or ended sessions.
      */
     fun send(command: PaceCommand) {
         demoGate?.let { return it.command(command) }
         val out = commands ?: return
-        // Not on the caller's thread, which is the UI's: a socket write may block.
+        // Socket writes can block, so they must run off the UI thread.
         scope.launch(ioDispatcher) {
             try {
                 synchronized(commandLock) {
@@ -94,10 +96,14 @@ class TraceFeed(
                     out.flush()
                 }
             } catch (_: IOException) {
-                // The JVM is gone; the read side notices and ends the feed.
+                // The read side handles connection failure and ends the feed.
             }
         }
     }
+
+    // Must be set before cancellation so the reader reports a user disconnection.
+    @Volatile
+    private var disconnecting = false
 
     private val job: Job = scope.launch(ioDispatcher) {
         val publisher = launch {
@@ -110,26 +116,32 @@ class TraceFeed(
         try {
             terminal = read()
         } catch (e: Exception) {
-            // Closing the feed fails the blocked read with an IOException; that is the cancellation, not a failure.
+            // Closing the resource unblocks reads with IOException. Check cancellation before reporting a failure.
             ensureActive()
             _failure.value = e.message ?: e.javaClass.simpleName
         } finally {
             publisher.cancel()
             synchronized(store) { store.endOfStream() }
-            // The last snapshot goes out before the status says it is over: whoever follows the feed while it is
-            // live must get to see how it ended.
+            // Publish the final snapshot before terminal status so followers receive the final state.
             publish()
-            _status.value = terminal
+            _status.value = if (disconnecting) FeedStatus.DISCONNECTED else terminal
         }
     }
 
     suspend fun close() = job.cancelAndJoin()
 
+    /**
+     * Leaves the captured trace available. If this was the last controller, the agent resumes at its configured pace.
+     */
+    suspend fun disconnect() {
+        disconnecting = true
+        close()
+    }
+
     private fun publish() {
         _snapshot.value = synchronized(store) { store.snapshot() }
     }
 
-    /** Reads the source to its end and returns the status the feed ends in. */
     private suspend fun read(): FeedStatus {
         when (val source = source) {
             is TraceSource.Demo -> {
@@ -137,7 +149,7 @@ class TraceFeed(
                 val gate = if (source.live) DemoGate(::accept).also { demoGate = it } else null
                 try {
                     for (frame in DemoTrace.frames()) {
-                        if (gate != null && frame.pace != null) continue // played live, the gate speaks for itself
+                        if (gate != null && frame.pace != null) continue // the live demo gate emits its own settings
                         frame.event?.let { gate?.await(it) }
                         accept(frame)
                         if (frame.header != null) gate?.announce()
@@ -150,25 +162,25 @@ class TraceFeed(
             }
             is TraceSource.TraceFile -> return readFile(source.file)
             is TraceSource.Session -> {
-                val socket = if (source.info.ended) null else runCatching { source.info.connect() }.getOrNull()
+                val socket = if (source.info.ended || !source.info.live) null else runCatching { source.info.connect() }.getOrNull()
                 if (socket != null) {
                     _status.value = FeedStatus.LIVE
                     commands = socket.getOutputStream()
                     val frames = try {
                         pump(socket, socket.getInputStream())
                     } catch (e: IOException) {
-                        // A JVM that is killed resets the connection instead of closing it. Either way it is gone.
+                        // A killed JVM can reset the connection. Use frames already read as the final trace.
                         currentCoroutineContext().ensureActive()
                         accepted
                     } finally {
                         commands = null
                     }
                     if (frames > 0) return FeedStatus.ENDED
-                    // Connected, but to something that hung up without a word: a stale descriptor whose port now
-                    // belongs to somebody else. Same as not connecting at all.
+                    // An empty replay can mean the descriptor's port belongs to another process. Fall back to the file.
                 }
                 // Finished, crashed, or never listening: the file has everything that was captured.
-                return readFile(source.info.traceFile ?: error("The session is over and names no trace file"))
+                readFile(source.info.traceFile ?: error("The session is over and names no trace file"))
+                return if (source.info.ended) FeedStatus.RECORDED else FeedStatus.PARTIAL
             }
         }
     }
@@ -180,15 +192,12 @@ class TraceFeed(
         return FeedStatus.RECORDED
     }
 
-    /** Frames accepted so far, by [pump]. */
     @Volatile
     private var accepted = 0
 
-    // A blocking socket read notices neither cancellation nor interruption, so cancellation closes the resource
-    // under the reader, which fails the pending read. That includes the very first read, of the file signature.
+    // Socket reads ignore cancellation and interruption. Closing the resource unblocks even the initial signature read.
     private suspend fun pump(resource: Closeable, input: InputStream): Int = coroutineScope {
-        // Undispatched: the closer must be waiting before the read blocks, or a cancellation in between would
-        // cancel it unstarted and leave nobody to close the resource.
+        // Start undispatched so cancellation can't skip the closer's finally block before a read blocks.
         val closer = launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 awaitCancellation()

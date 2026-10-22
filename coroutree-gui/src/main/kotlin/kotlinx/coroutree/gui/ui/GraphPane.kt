@@ -147,7 +147,7 @@ fun GraphPane(viewModel: TraceViewModel, onOpenFrame: (StackFrameDef) -> Unit, m
                 if (state.layout.isEmpty) {
                     val hidden = viewModel.graph.hiddenNodes
                     Label(
-                        if (hidden == 0) "No nodes yet" else "All $hidden nodes so far are library machinery — switch on “library / pools” to see them",
+                        if (hidden == 0) "No nodes yet" else "All $hidden nodes so far are library nodes. Switch on “library / pools” to see them.",
                         Modifier.align(Alignment.Center), color = palette.textDim,
                     )
                 } else if (!state.autoFit && !state.wholeGraphInView) {

@@ -31,11 +31,11 @@ class CoroutreeViewFunctionalTest {
             """,
         )
         val dataDir = File(project.dir, "build/coroutree")
-        // No ideCommand in the build script: the GUI is left to its own default.
-        val expected = listOf("--dir", dataDir.path, "--open-latest")
+        // No ideCommand in the build script: the GUI is left to its own default, and is told nothing at all.
+        val expected = emptyList<String>()
         fun started(output: String) = Regex("coroutree GUI started").findAll(output).count()
 
-        // Nothing has been recorded yet; the GUI opens on a directory that is there and empty.
+        // Nothing has been recorded yet; the GUI finds that out by itself.
         val first = project.run("coroutreeView", "--configuration-cache")
         assertEquals(TaskOutcome.SUCCESS, first.task(":coroutreeView")?.outcome)
         assertEquals(TaskOutcome.SUCCESS, first.task(":app:coroutreeView")?.outcome)

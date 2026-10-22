@@ -77,7 +77,7 @@ class PaceUiTest {
             onNodeWithTag("pace-change-0").assertTextContains("as configured", substring = true)
             onNodeWithTag("node-${receipt.id}").performClick()
             waitForIdle()
-            onNodeWithTag("node-pace").assertTextContains("1 event in 2 s per sequence — set on this node, for its subtree")
+            onNodeWithTag("node-pace").assertTextContains("1 event in 2 s per sequence (set on this node, for its subtree)")
             onAllNodesWithTag("node-pace-toggle").assertCountEquals(0)
         }
     }
@@ -180,7 +180,7 @@ class PaceUiTest {
         test(viewModel) {
             onNodeWithTag("node-${receipt.id}").performClick()
             waitForIdle()
-            onNodeWithTag("node-pace").assertTextContains("full speed — the program's")
+            onNodeWithTag("node-pace").assertTextContains("full speed (the program's)")
             onAllNodesWithTag("node-pace-inherit").assertCountEquals(0)
             onNodeWithTag("node-pace-toggle").performClick()
             onNodeWithTag("node-pace-step").performClick()
@@ -191,7 +191,7 @@ class PaceUiTest {
             viewModel.snapshot = demo.snapshot(setting(reason = PaceDef.Reason.CONFIG), setting(scope = receipt.id, paused = true))
             waitForIdle()
             onNodeWithTag("pace-marker-${receipt.id}").assertExists()
-            onNodeWithTag("node-pace").assertTextContains("paused — set on this node, for its subtree")
+            onNodeWithTag("node-pace").assertTextContains("paused (set on this node, for its subtree)")
             val description = onNodeWithTag("node-${receipt.id}").fetchSemanticsNode().config.getOrNull(SemanticsProperties.StateDescription)
             assertTrue("subtree paused" in description.orEmpty(), description)
             onNodeWithTag("node-pace-toggle").assertTextContains("Resume")

@@ -223,7 +223,7 @@ fun PaceMarker(setting: PaceSetting, modifier: Modifier = Modifier) {
     }
 }
 
-const val THREADS_NOT_COROUTINES = "We hold threads, not coroutines: a held coroutine keeps the thread it is on, and whatever else would run there waits with it."
+const val THREADS_NOT_COROUTINES = "A pause holds threads, not coroutines. A held coroutine holds its thread, so everything else on that thread waits too."
 
 /** Space pauses and resumes, → steps; with a modifier key held they are somebody else's shortcuts. */
 fun controlKeyOf(event: KeyEvent): TraceViewModel.ControlKey? {

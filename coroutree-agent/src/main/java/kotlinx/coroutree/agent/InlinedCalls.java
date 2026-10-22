@@ -14,15 +14,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Which inline functions the code at a line was inlined through. A source map says from which file and line inlined
- * code came and where the outermost inline call is; it names no function and knows nothing of the calls in between.
- * The compiler says that for debuggers, with marker variables in the local variable table: {@code $i$f$name} spans
- * the inlined body of {@code name}, {@code $i$a$-name-…} spans an inlined lambda that was passed to {@code name}.
- *
- * The code at an instruction belongs to the innermost function body around it, except that a lambda belongs to
- * whoever passed it: walking outwards, a lambda of {@code f} cancels the next body of {@code f}. The bodies that are
- * left, innermost first, are the inline calls the code is in. Where each was called from is the line in force right
- * before its marker's span: the arguments of the call are evaluated under it, and so is the marker set.
+ * Source maps omit function names and intermediate inline calls. Compiler markers give this information:
+ * <ul>
+ * <li>{@code $i$f$name} spans the inline body of {@code name}.</li>
+ * <li>{@code $i$a$-name-…} spans an inline lambda passed to {@code name}.</li>
+ * </ul>
+ * A lambda belongs to its caller, so its marker cancels the next enclosing body marker of the same function.
+ * The remaining bodies form the inline stack, innermost first.
+ * Each call site's line is the line active before its marker span, where arguments and the marker are evaluated.
  */
 final class InlinedCalls {
     private InlinedCalls() {}
@@ -30,7 +29,7 @@ final class InlinedCalls {
     private static final String FUNCTION = "$i$f$";
     private static final String LAMBDA = "$i$a$-";
 
-    /** By line, for the lines that are in an inline function's body. Lines of inlined code are unique in a class, so one map will do. */
+    /** Inline line numbers are unique across all methods of a class, so one map covers the class. */
     static Map<Integer, SourceMaps.Inlined> of(ClassNode node) {
         Map<Integer, SourceMaps.Inlined> calls = new HashMap<>();
         Map<Integer, Integer> depths = new HashMap<>();
@@ -43,8 +42,7 @@ final class InlinedCalls {
                 if (insn.getOpcode() >= 0 && line > 0) {
                     int depth = 0;
                     for (Scope scope : scopes) if (scope.contains(index)) depth++;
-                    // A marker is set by the first instructions of what it marks, which are therefore outside of its
-                    // span and look like the enclosing function's. The line's deepest instruction is the one to ask.
+                    // Marker setup precedes its own span. Use the deepest instruction to identify the line's inline body.
                     Integer known = depths.get(line);
                     if (depth > 0 && (known == null || known < depth)) {
                         depths.put(line, depth);
@@ -102,7 +100,6 @@ final class InlinedCalls {
             return scopes;
         }
 
-        // The line in force at every instruction, to ask for the one before a span.
         int[] lineBefore = new int[method.instructions.size() + 1];
         int line = 0, firstLine = 0, index = 0, lineOfLastReal = 0;
         for (AbstractInsnNode insn : method.instructions) {
@@ -113,8 +110,7 @@ final class InlinedCalls {
             }
             if (insn.getOpcode() >= 0) lineOfLastReal = line;
         }
-        // A suspending method is a state machine: after every suspension point the variables of the spans that are
-        // still open are set anew, under the method's first line, and the spans begin again. That is the same call.
+        // After suspension, marker spans restart at the method's first line. Reuse the original call site for those spans.
         scopes.sort(INNERMOST_FIRST.reversed());
         Map<String, Integer> lastCall = new HashMap<>();
         for (Scope scope : scopes) {
@@ -128,7 +124,7 @@ final class InlinedCalls {
         return scopes;
     }
 
-    /** Spans nest, so the later one starts, the further in it is. Not a lambda: nothing here may bootstrap itself inside a transformer. */
+    /** Avoid lambda bootstrap during transformation. */
     private static final Comparator<Scope> INNERMOST_FIRST = new Comparator<>() {
         @Override
         public int compare(Scope a, Scope b) {
@@ -142,7 +138,7 @@ final class InlinedCalls {
         final int slot;
         final int start;
         final int end;
-        /** The line, in the numbering of the class file, that the inline call is on. */
+        /** Call-site line in class-file numbering. */
         int calledFrom;
 
         Scope(String function, boolean lambda, int slot, int start, int end) {

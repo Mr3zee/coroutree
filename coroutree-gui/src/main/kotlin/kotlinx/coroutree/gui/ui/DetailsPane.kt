@@ -103,7 +103,7 @@ private fun LazyListScope.eventDetails(snapshot: TraceSnapshot, event: Event, on
             Properties {
                 Property("Class", exception.className, code = true)
                 if (exception.message.isNotEmpty()) Property("Message", exception.message, maxLines = 4)
-                if (exception.cancellation) Property("Cancellation", "yes — a normal way to stop, not a failure")
+                if (exception.cancellation) Property("Cancellation", "yes (a normal stop, not a failure)")
                 if (exception.identity != 0) Property("Instance", "@" + Integer.toHexString(exception.identity), code = true)
             }
         }
@@ -146,7 +146,7 @@ private fun LazyListScope.nodeDetails(snapshot: TraceSnapshot, node: NodeSnapsho
             info.thread?.let { thread ->
                 Property("Thread", listOfNotNull("tid ${thread.tid}", "virtual".takeIf { thread.virtual }, "daemon".takeIf { thread.daemon }).joinToString(", "))
             }
-            if (node.placeholder) Property("Note", "never defined in the trace; known only by reference")
+            if (node.placeholder) Property("Note", "never defined in the trace, known only by reference")
         }
     }
     executionControl(node, viewModel)
@@ -206,7 +206,7 @@ private fun LazyListScope.executionControl(node: NodeSnapshot, viewModel: TraceV
                 governing == viewModel.globalPace -> "the program's"
                 else -> "inherited from a node above"
             }
-            Property("Setting", settingText(governing) + " — " + whose, tag = "node-pace")
+            Property("Setting", settingText(governing) + " (" + whose + ")", tag = "node-pace")
         }
     }
     if (!controllable) return

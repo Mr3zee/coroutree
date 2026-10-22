@@ -18,6 +18,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -126,7 +127,6 @@ class AgentArgumentProviderTest {
         assertEquals(
             mapOf(
                 "trace.dir" to File(oddDir, "root/build/coroutree/traces/$buildId").path,
-                "sessions.dir" to File(oddDir, "root/build/coroutree/sessions/$buildId").path,
                 "live" to "true",
                 "build.id" to buildId,
                 "task.path" to ":app:run",
@@ -141,9 +141,14 @@ class AgentArgumentProviderTest {
             ),
             config.entries.associate { it.key.toString() to it.value.toString() },
         )
-        assertTrue(File(config.getProperty("trace.dir")).isDirectory && File(config.getProperty("sessions.dir")).isDirectory, "the agent is given directories that exist")
+        assertTrue(File(config.getProperty("trace.dir")).isDirectory, "the agent is given a directory that exists")
+        assertNull(config.getProperty("sessions.dir"), "the session goes to the user's registry, the agent's default")
         assertEquals(own.readLines(), File(config.getProperty("source.index")).readLines())
         assertEquals(setOf("agent.properties", "source-index.tsv"), workDir.list()!!.toSet(), "nothing half-written is left next to the files")
+
+        val sessions = File(oddDir, "root/build/coroutree/sessions")
+        assertEquals(sessions.path, provider().apply { sessionsDirectory.set(sessions.path) }.also { it.asArguments() }.config().getProperty("sessions.dir"), "a build can say where its sessions go")
+        assertTrue(sessions.isDirectory, "and then the directory exists before the agent needs it")
     }
 
     @Test

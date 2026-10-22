@@ -2,6 +2,7 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 plugins {
     `java-library`
+    alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.shadow)
     `maven-publish`
 }
@@ -11,12 +12,20 @@ plugins {
  *  - `runtime` source set: what instrumented code calls into. It is appended to the bootstrap class path (instrumented
  *    JDK classes must see it), so it is plain Java with no dependencies at all. Packed as a jar nested in the agent jar.
  *  - `main` source set: premain and the ASM transformers, loaded by the system class loader, ASM relocated.
+ * Both are Java. Kotlin is for the tests only: the Kotlin plugin adds no stdlib to `main` and `runtime`
+ * (kotlin.stdlib.default.dependency=false in gradle.properties), so nothing of Kotlin can reach the agent jar.
  */
 val runtime: SourceSet by sourceSets.creating
 
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(26)
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
     }
 }
 
@@ -43,6 +52,7 @@ dependencies {
     shade(libs.asm.tree)
 
     testImplementation(runtime.output)
+    testImplementation(kotlin("stdlib"))
     // Tests only, none of it reaches the agent jar: ASM unshaded to drive the transformers; the model, to read with the
     // other implementation of the trace format what this one wrote; kotlinx.coroutines, the classes the hook table names.
     testImplementation(libs.asm)

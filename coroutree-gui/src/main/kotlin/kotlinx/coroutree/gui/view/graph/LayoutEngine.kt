@@ -17,34 +17,20 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Lays out a [GraphModel]: the structural forest as a tidy tree, top down, and every cross-link as an orthogonal
- * route. Pure geometry and deterministic: the same model gives the same drawing.
+ * The drawing invariant (DESIGN §6.2) depends on these constraints:
  *
- * The drawing invariant (DESIGN §6.2) holds by construction, not by repair:
+ * - Depth determines box layers. Channels between layers hold horizontal tracks. Gaps between boxes hold vertical tracks.
+ * - Cross-links alternate between channels and gaps. Gap choices from the preliminary layout stay valid because box order within a layer never changes.
+ * - [GraphMetrics] separates verticals by residue class. Overlapping horizontal segments use separate tracks, so crossings stay perpendicular and clear of bends.
+ * - Labels occupy horizontal segments clear of every vertical in the channel. Tracks include label height.
  *
- * - Boxes stand in layers by depth. Between two layers lies a **channel** of horizontal tracks, between two
- *   neighbours of a layer a **gap** of vertical tracks; nothing but boxes is in a layer's band and nothing but
- *   lines in a channel.
- * - A cross-link leaves a port on its upper box, and on its way down alternates between a horizontal piece in a
- *   channel and a vertical piece through a gap of the next layer, until it reaches a port on its lower box. Which
- *   gap it takes in each layer is decided on a preliminary layout; the gaps are then made as wide as their tracks
- *   need and the forest is laid out again. That cannot invalidate the choice: the order of boxes in a layer is a
- *   property of the forest, not of the layout.
- * - Every vertical piece has an x of its own ([GraphMetrics]: three residue classes, so that pieces entering a
- *   channel from above and from below can never meet), every horizontal piece a track of its own wherever it
- *   overlaps another. So lines cross at right angles and away from bends, or not at all.
- * - A label lies on a horizontal piece of its edge, on a stretch no vertical line of the channel passes, and its
- *   track is as high as the label.
- *
- * What is heuristic is only the number of crossings: the order of ports on a box, of tracks in a gap and of tracks
- * in a channel is chosen so that lines heading the same way nest instead of crossing, and the bus of a parent's
- * structural edges runs below the cross-links of its channel (one crossing with the trunk instead of one per drop).
+ * Port and track order reduce crossings heuristically. Structural buses run below cross-links to cross one trunk instead of several child drops.
  */
 object LayoutEngine {
     fun layout(graph: GraphModel): GraphLayout = if (graph.nodes.isEmpty()) GraphLayout.EMPTY else Pass(graph).run()
 
     private class Link(val input: Int, val from: Int, val upper: Int, val lower: Int, val sameLayer: Boolean, val labelWidth: Int) {
-        /** Per layer strictly between the two ends: the gap taken (index of the box to its right) and roughly where. */
+        /** For each intermediate layer: the gap index (the box to its right) and approximate x coordinate. */
         var gaps = EMPTY
         var approx = EMPTY
 
@@ -98,13 +84,13 @@ object LayoutEngine {
             graph.links.forEachIndexed { i, link ->
                 val from = forest.indexOf[link.from] ?: return@forEachIndexed
                 val to = forest.indexOf[link.to] ?: return@forEachIndexed
-                if (from == to) return@forEachIndexed // an edge needs two boxes
+                if (from == to) return@forEachIndexed
                 val upper = if (depth[to] < depth[from]) to else from
                 links += Link(i, from, upper, if (upper == from) to else from, depth[from] == depth[to], link.labelWidth)
             }
         }
 
-        /** A link leaves its upper box at the bottom and enters its lower box at the top; between two boxes of one layer it hangs below both. */
+        /** Same-layer links use bottom ports at both ends. Other links use the upper box's bottom and lower box's top. */
         private fun sizeBoxes() {
             val top = IntArray(n)
             val bottom = IntArray(n)
@@ -120,11 +106,6 @@ object LayoutEngine {
             }
         }
 
-        /**
-         * Walks every link down the rough layout and picks, in each layer it has to pass, the gap that takes it the
-         * least out of its way: the one it is already over, or else the one beside the box in its way, on the side
-         * of its target.
-         */
         private fun chooseGaps(rough: IntArray): Array<Array<ArrayList<Link>?>> {
             val gapLinks = Array(layers.size) { arrayOfNulls<ArrayList<Link>>(layers[it].size + 1) }
             for (link in links) {
@@ -137,7 +118,6 @@ object LayoutEngine {
                 val target = rough[link.lower]
                 for (m in 0 until between) {
                     val row = layers[from + 1 + m]
-                    // First box whose right edge is not left of us.
                     var lo = 0
                     var hi = row.size
                     while (lo < hi) {
@@ -168,14 +148,14 @@ object LayoutEngine {
             return gapLinks
         }
 
-        /** Free space each box needs to its right: room for the tracks of the gap there. The gaps at the ends of a layer are unbounded. */
+        /** Interior gaps need track clearance. Gaps at layer ends are unbounded. */
         private fun separations(gapLinks: Array<Array<ArrayList<Link>?>>): IntArray {
             val sepAfter = IntArray(n) { BOX_GAP }
             for (layer in layers.indices) {
                 val row = layers[layer]
                 for (gap in 1 until row.size) {
                     val tracks = gapLinks[layer][gap]?.size ?: continue
-                    // One column more than the tracks take: the first one may be up to a column away from the box.
+                    // The first track can be up to one column from the box, so reserve an extra column.
                     sepAfter[row[gap - 1]] = max(BOX_GAP, 2 * GAP_CLEARANCE + tracks * COLUMN)
                 }
             }
@@ -188,7 +168,7 @@ object LayoutEngine {
                 val residue = GraphMetrics.linkClass(layer)
                 for (gap in 0..row.size) {
                     val passing = gapLinks[layer][gap] ?: continue
-                    // Left to right by where a link comes from and goes to, so that neighbours in a gap do not swap sides.
+                    // Sort by source and target so neighboring links in a gap don't swap sides.
                     val piece = IntArray(passing.size) { layer - depth[passing[it].upper] - 1 }
                     val order = passing.indices.sortedWith(
                         compareBy<Int> { i ->
@@ -247,7 +227,7 @@ object LayoutEngine {
             (this[v] ?: ArrayList<PortEnd>(2).also { this[v] = it }) += end
         }
 
-        /** Moves the drawing so that it starts at [MARGIN], by whole columns: the residue classes stay what they are. */
+        /** Shift only by whole columns to preserve residue classes. */
         private fun normalizeX() {
             var left = Int.MAX_VALUE
             for (v in 0 until n) left = min(left, x[v] - halfWidth[v])
@@ -257,7 +237,7 @@ object LayoutEngine {
             for (link in links) for (i in link.xs.indices) link.xs[i] += shift
         }
 
-        /** The horizontal pieces of every channel; channel `c` lies below layer `c`. Places the labels on the way. */
+        /** Channel `c` lies below layer `c`. */
         private fun collectPieces(): Array<ArrayList<Piece>> {
             val channels = Array(layers.size) { ArrayList<Piece>() }
             val verticals = arrayOfNulls<IntArray>(layers.size)
@@ -284,9 +264,8 @@ object LayoutEngine {
         }
 
         /**
-         * A label goes on the longest horizontal piece that has room for it, between two neighbouring vertical
-         * lines of that channel: whichever of them reach the label's track, none passes through the label. Room for
-         * less than the whole label truncates it; room for less than [MIN_LABEL_WIDTH] leaves the edge without.
+         * Label slots exclude every vertical in the channel, even those that don't reach the chosen track.
+         * Labels can be truncated, but widths below [MIN_LABEL_WIDTH] are omitted.
          */
         private fun placeLabel(link: Link, firstChannel: Int, verticals: Array<IntArray?>) {
             val pieces = (0 until link.xs.size - 1).sortedByDescending { kotlin.math.abs(link.xs[it + 1] - link.xs[it]) }
@@ -335,9 +314,7 @@ object LayoutEngine {
         }
 
         /**
-         * Gives every horizontal piece its y. Pieces are taken in the order that makes lines nest, and each goes
-         * below whatever it overlaps among those taken before it, so two pieces are on one track only where they
-         * are [LINE_GAP] apart along it. Returns the top of every layer.
+         * Segments can share a track only if they are at least [LINE_GAP] apart along it.
          */
         private fun assignTracks(channels: Array<ArrayList<Piece>>): IntArray {
             val layerTops = IntArray(layers.size)
@@ -359,7 +336,7 @@ object LayoutEngine {
                     offsets[i] = (if (above == 0) CHANNEL_PAD else above + LINE_GAP) + piece.halfHeight
                     tracks.occupy(piece.left, piece.right + LINE_GAP, offsets[i] + piece.halfHeight)
                 }
-                // Buses of one channel never overlap, so they can share the lowest track any of them needs: siblings line up.
+                // Nonoverlapping buses share the lowest track any bus needs, so siblings line up.
                 var busOffset = 0
                 for (bus in buses) {
                     val above = tracks.lowest(bus.left, bus.right + LINE_GAP)
@@ -431,9 +408,11 @@ object LayoutEngine {
     private const val LABEL_SLOTS_TRIED = 512
 
     /**
-     * Top to bottom in a channel: links between two boxes of the layer above (both ends go up, the shorter inside
-     * the longer), then links passing through: those heading right in descending order of where they come down,
-     * those heading left in ascending order, which is the order in which two of a kind do not cross.
+     * Top-to-bottom track order avoids crossings between links that head the same way:
+     *
+     * - Same-layer links, with shorter links inside longer ones.
+     * - Rightward links, in descending order of their incoming x coordinate.
+     * - Leftward links, in ascending order of their incoming x coordinate.
      */
     private val PIECE_ORDER: Comparator<Piece> = compareBy<Piece> { piece ->
         val link = piece.link!!
@@ -452,8 +431,7 @@ object LayoutEngine {
     }.thenBy { it.link!!.input }
 
     /**
-     * How far down a channel is occupied, as a function of x: range maximum with range "raise to" updates, over the
-     * coordinates the pieces of the channel begin and end at.
+     * Occupied channel depth by x coordinate. Range updates only raise the depth.
      */
     private class TrackProfile(pieces: List<Piece>) {
         private val coordinates: IntArray

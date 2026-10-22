@@ -17,8 +17,7 @@ import org.gradle.api.tasks.TaskAction
 import java.io.File
 
 /**
- * Writes the module's part of the source index: which file declares which package.
- * A stack frame knows its class and a bare file name; this is what turns the pair into a path the IDE can open.
+ * Indexes source files by package and file name so the GUI can open stack frames in the IDE.
  */
 @CacheableTask
 public abstract class CoroutreeSourceIndexTask : DefaultTask() {
@@ -32,7 +31,7 @@ public abstract class CoroutreeSourceIndexTask : DefaultTask() {
     @get:Input
     public abstract val projectPath: Property<String>
 
-    /** Absolute, and part of the output: traces are opened on the machine that recorded them. */
+    /** Absolute project directory included in the index. Source lookup requires access to this directory. */
     @get:Input
     public abstract val projectDirectory: Property<String>
 
@@ -45,7 +44,7 @@ public abstract class CoroutreeSourceIndexTask : DefaultTask() {
     protected val sourceFiles: FileTree
         get() = (mainSourceDirectories + testSourceDirectories).asFileTree.matching { it.include("**/*.kt", "**/*.java") }
 
-    /** The order of the directories decides the order of the records, and [sourceFiles] does not capture it. */
+    /** Directory order affects record precedence but isn't part of [sourceFiles]. */
     @get:Input
     protected val sourceDirectoryOrder: List<String>
         get() {

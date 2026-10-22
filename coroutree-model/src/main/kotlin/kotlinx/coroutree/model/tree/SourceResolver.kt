@@ -15,10 +15,8 @@ public data class SourceLocation(
 )
 
 /**
- * Maps stack frames to source files with the index embedded in the trace header.
- *
- * A frame knows its class and the bare name of its source file. Kotlin and Java both put a class into the package
- * its file declares, so `(package of the class, file name)` identifies the file.
+ * Maps stack frames to source files with the index in the trace header.
+ * If a package and file name match several files, the first index entry wins. Main sources precede test sources.
  */
 public class SourceResolver(index: SourceIndex) {
     private class Entry(val module: String, val rootDir: String, val path: String)
@@ -35,8 +33,6 @@ public class SourceResolver(index: SourceIndex) {
     public fun resolve(frame: StackFrameDef): SourceLocation? {
         if (frame.fileName.isEmpty()) return null
         val candidates = entries[key(frame.className.substringBeforeLast('.', ""), frame.fileName)] ?: return null
-        // Several source sets may hold a file with the same package and name (main and test, or two modules).
-        // The frame cannot tell them apart; take the first in index order, which lists main before test.
         val entry = candidates.first()
         return SourceLocation(entry.module, entry.path, File(entry.rootDir, entry.path).path, frame.line)
     }

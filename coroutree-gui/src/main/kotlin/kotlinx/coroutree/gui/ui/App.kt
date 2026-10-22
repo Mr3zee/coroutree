@@ -17,13 +17,14 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutree.gui.AppState
 import kotlinx.coroutree.gui.OpenTrace
 import kotlinx.coroutree.gui.source.FeedStatus
+import kotlinx.coroutree.gui.source.TraceSource
 
 @Composable
-fun App(state: AppState, onChooseTraceFile: () -> Unit, onChooseDir: () -> Unit) {
+fun App(state: AppState, onChooseTraceFile: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         val open = state.current
         if (open == null) {
-            StartScreen(state.dir, rememberDirListing(state.dir), state::open, onChooseTraceFile, onChooseDir)
+            StartScreen(state.registry.dir, rememberSessions(state.registry), state::open, onChooseTraceFile)
         } else {
             OpenTraceScreen(open, state)
         }
@@ -44,8 +45,14 @@ private fun OpenTraceScreen(open: OpenTrace, state: AppState) {
     val status by open.feed.status.collectAsState()
     val failure by open.feed.failure.collectAsState()
     // The view model is what the panes read; hand it each published snapshot.
-    LaunchedEffect(snapshot) { open.viewModel.snapshot = snapshot }
+    LaunchedEffect(snapshot, status) { if (open.shows(snapshot, status)) open.viewModel.snapshot = snapshot }
     // Commands of execution control go where the trace comes from, for as long as there is a JVM at the other end.
     LaunchedEffect(status) { open.viewModel.commands = if (status == FeedStatus.LIVE) open.feed::send else null }
-    TraceScreen(open.viewModel, open.feed.source.title, status, failure, state::openInIde, state::close)
+    val session = open.feed.source is TraceSource.Session
+    TraceScreen(
+        open.viewModel, open.feed.source.title, status, failure, state::openInIde,
+        onClose = state::close,
+        onDisconnect = if (session && status == FeedStatus.LIVE) state::disconnect else null,
+        onReconnect = if (session && status == FeedStatus.DISCONNECTED) state::reconnect else null,
+    )
 }

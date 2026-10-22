@@ -4,8 +4,8 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * The structural forest as index arrays. Nothing here recurses: a coroutine tree can be tens of thousands deep.
- * A node whose parent is not in the list is a root; sibling order is list order.
+ * Avoid recursion because coroutine trees can be tens of thousands of nodes deep.
+ * Nodes with missing parents are roots. Sibling order follows the input list.
  */
 internal class Forest(nodes: List<GraphNode>) {
     val size: Int = nodes.size
@@ -21,7 +21,7 @@ internal class Forest(nodes: List<GraphNode>) {
     /** Parents before children, siblings left to right. */
     val preorder: IntArray
 
-    /** Node indices per depth, left to right: the order in which the boxes of a layer stand, whatever the layout. */
+    /** Node indices at each depth, left to right. Layout must preserve this order. */
     val layers: Array<IntArray>
     val posInLayer = IntArray(size)
 
@@ -78,20 +78,12 @@ internal class Forest(nodes: List<GraphNode>) {
 }
 
 /**
- * Tidy-tree layout of the forest along x (Reingold–Tilford with contours, for boxes of different widths): children
- * left to right under their parent, the parent centred over them, subtrees as close as their contours allow, roots
- * side by side. Box centres come out as multiples of [GraphMetrics.COLUMN].
- *
- * How far apart two neighbours of a layer must be is not a constant: `sepAfter[v]` is the free space required
- * between `v` and the box to its right, which the router raises where vertical tracks pass between the two. The
- * neighbours of a layer are known before any layout (they are [Forest.layers]), and each such pair is compared here
- * exactly once, when the subtrees holding them are put side by side.
- *
- * Linear in the number of nodes: a contour is merged into the deeper of the two, at a cost of the shallower one's
- * height.
+ * Box centers must be multiples of [GraphMetrics.COLUMN].
+ * `sepAfter[v]` is the free space required between `v` and its right neighbor in [Forest.layers].
+ * Merging the shallower contour into the deeper one makes total work linear in the number of nodes.
  */
 internal class TidyForest(private val forest: Forest, private val halfWidth: IntArray) {
-    /** Outline of a subtree per depth. Entry `i` is depth `deepest - i`, so that a parent is appended, not inserted. */
+    /** Entry `i` has depth `deepest - i`, so a parent append leaves existing entries in place. */
     private class Contour(capacity: Int) {
         /** Added to every stored coordinate: moving a subtree is O(1). */
         var base = 0
@@ -99,7 +91,7 @@ internal class TidyForest(private val forest: Forest, private val halfWidth: Int
         var leftX = IntArray(capacity)
         var rightX = IntArray(capacity)
 
-        /** The node whose right edge is `rightX`: what `sepAfter` is asked about. */
+        /** The node whose right edge is `rightX`, used to index `sepAfter`. */
         var rightNode = IntArray(capacity)
 
         fun append(left: Int, right: Int, node: Int) {
@@ -119,7 +111,7 @@ internal class TidyForest(private val forest: Forest, private val halfWidth: Int
     /** Centre x of every node. */
     fun layout(sepAfter: IntArray): IntArray {
         val contours = arrayOfNulls<Contour>(forest.size)
-        val offset = IntArray(forest.size) // relative to the parent; absolute for roots
+        val offset = IntArray(forest.size) // relative to the parent, absolute for roots
         val order = forest.preorder
         for (k in order.indices.reversed()) {
             val v = order[k]
@@ -136,7 +128,6 @@ internal class TidyForest(private val forest: Forest, private val halfWidth: Int
                     contours[c] = null
                     offset[c] = lastShift
                 }
-                // Centred over the first and the last child, on the grid. With one child that is exactly above it.
                 val centre = floorToClass(offset[forest.child(v, count - 1)] / 2, 0, GraphMetrics.COLUMN)
                 for (i in 0 until count) offset[forest.child(v, i)] -= centre
                 merged.base -= centre
@@ -162,8 +153,7 @@ internal class TidyForest(private val forest: Forest, private val halfWidth: Int
     private var lastShift = 0
 
     /**
-     * Puts [sub] to the right of [acc], whose first root is at 0: as far left as every common depth allows.
-     * Returns the outline of both, and the position of [sub]'s root in [lastShift].
+     * [acc]'s first root must be at 0. Returns the merged contour and writes [sub]'s root position to [lastShift].
      */
     private fun place(acc: Contour, sub: Contour, sepAfter: IntArray): Contour {
         val common = min(acc.size, sub.size)

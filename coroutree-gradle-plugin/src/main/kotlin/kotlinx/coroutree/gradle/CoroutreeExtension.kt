@@ -1,6 +1,7 @@
 package kotlinx.coroutree.gradle
 
 import org.gradle.api.Action
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Nested
@@ -8,47 +9,59 @@ import org.gradle.api.tasks.Nested
 /**
  * ```
  * coroutree {
- *     enabled = providers.gradleProperty("coroutree").isPresent   // this is the default
+ *     enabled = providers.gradleProperty("coroutree").isPresent
  *     includePackages("com.acme")
  *     excludePackages("com.acme.generated")
  *     live { enabled = true }
- *     pace {                       // execution control: slowing down, pausing and stepping the program from the GUI
- *         enabled = true           // false: the JVM has no gate at all
- *         startPaused = false      // true: held at the first event until a GUI resumes or steps; needs live
- *         eventsPerSecond = 0.2    // the pace the run starts with, per sequence; unset = unlimited
+ *     pace {
+ *         enabled = true
+ *         startPaused = false
+ *         eventsPerSecond = 0.2
  *     }
  *     stackDepth = 32
+ *     sessionsDirectory = layout.buildDirectory.dir("coroutree/sessions")
  * }
  * ```
  *
- * What one wants to change for a single run is a Gradle property, and **the command line wins over this block**, in
- * both directions: `-Pcoroutree` (`enabled`), `-Pcoroutree.live`, `-Pcoroutree.pace`, `-Pcoroutree.pace.startPaused`
- * (each `true`, also bare, or `false`) and `-Pcoroutree.pace.eventsPerSecond` (a number, or `unlimited`).
+ * Use Gradle properties to override these settings for one run:
+ *
+ * - `-Pcoroutree`: enables tracing. `-Pcoroutree=false` disables it.
+ * - `-Pcoroutree.live`: enables live streaming. Accepts `true`, `false`, or no value for `true`.
+ * - `-Pcoroutree.pace`: enables execution control. Accepts the same boolean values.
+ * - `-Pcoroutree.pace.startPaused`: starts paused. Accepts the same boolean values.
+ * - `-Pcoroutree.pace.eventsPerSecond`: sets the initial pace. Accepts a positive number or `unlimited`.
  */
 public abstract class CoroutreeExtension {
     /**
-     * Attach the agent to the `JavaExec` and `Test` tasks of this project. Off by default; `-Pcoroutree` on the command
-     * line switches it on and `-Pcoroutree=false` off, whatever is set here.
+     * Whether to attach the agent to this project's `JavaExec` and `Test` tasks. Default is false.
+     * `-Pcoroutree` enables tracing and `-Pcoroutree=false` disables it, regardless of this setting.
      */
     public abstract val enabled: Property<Boolean>
 
     /**
-     * Package prefixes that count as project code; everything else is tagged as library.
-     * Left empty, the packages of the project's own sources (and of the projects it depends on) are used.
+     * Package prefixes tagged as project code. All other packages are tagged as library code.
+     * Default is empty, which uses this project's source packages and those of its project dependencies.
      */
     public abstract val includedPackages: ListProperty<String>
 
-    /** Package prefixes that count as library code even though an included prefix covers them. */
+    /** Package prefixes tagged as library code even when an included prefix matches. Default is empty. */
     public abstract val excludedPackages: ListProperty<String>
 
-    /** Frames captured per event. */
+    /** Maximum stack frames captured for each event. Must be positive. Default is 32. */
     public abstract val stackDepth: Property<Int>
 
     /**
-     * Command template the GUI runs to open a source location in the IDE; handed to it as `--ide`.
-     * Left unset, the GUI uses its own default.
+     * Command template for the GUI to open a source location in the IDE.
+     * Default is unset, which uses the GUI's default command.
      */
     public abstract val ideCommand: Property<String>
+
+    /**
+     * Where the agent publishes the session descriptor that the GUI's session list reads.
+     * Default is unset, which uses the agent's default: `~/.coroutree/sessions`, shared by every build of the user.
+     * Set it to keep a build's JVMs out of that list, on CI for example.
+     */
+    public abstract val sessionsDirectory: DirectoryProperty
 
     @get:Nested
     public abstract val live: LiveSettings
@@ -73,31 +86,30 @@ public abstract class CoroutreeExtension {
     }
 
     public interface LiveSettings {
-        /** Serve the trace over a loopback socket while the program runs, so that the GUI can follow it. On by default. */
+        /** Whether to serve the trace to the GUI over a loopback socket while the program runs. Default is true. */
         public val enabled: Property<Boolean>
     }
 
     /**
-     * Execution control: the agent can hold the program at its events, to slow it down, pause it and step it, the whole
-     * program or a subtree, as told by the GUI over the live socket. What is set here is how a run *starts*.
+     * Initial execution-control settings. The GUI can later change the pace, pause, or step the program or a subtree.
      */
     public interface PaceSettings {
         /**
-         * On by default: an open gate costs the program one volatile read per event and holds nobody, and the GUI's
-         * controls work without touching the build. Off, the JVM has no gate at all, and the GUI shows no controls.
+         * Whether the GUI can slow down, pause, and step the program. Default is true.
+         * If false, the GUI hides execution controls.
          */
         public val enabled: Property<Boolean>
 
         /**
-         * Hold the program at its first event until a GUI resumes or steps it. Needs [LiveSettings.enabled]: without the
-         * socket nothing could ever resume the program, so the setting is refused with a warning and the program runs.
+         * Whether to hold the program at its first event until a GUI resumes or steps it. Default is false.
+         * Requires [LiveSettings.enabled]. Otherwise, the agent reports a warning and runs without the initial pause.
          */
         public val startPaused: Property<Boolean>
 
         /**
-         * The pace the run starts with, and falls back to when the last controlling GUI goes away: at most this many
-         * events per second in every *sequence* (events made by one flow, or happening to one node; parallel sequences
-         * are paced independently). `0.2` is one event in five seconds. Unset: unlimited.
+         * Initial maximum events per second for each sequence: one flow or one node. Parallel sequences are paced independently.
+         * When the last controlling GUI disconnects, the run returns to this pace.
+         * `0.2` is one event in five seconds. Default is unset for unlimited speed.
          */
         public val eventsPerSecond: Property<Double>
     }

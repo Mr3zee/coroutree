@@ -1,64 +1,57 @@
 # coroutree
 
-Shows the **concurrency tree** of a Kotlin/JVM (or mixed Kotlin + Java) program: threads, coroutines, scopes and
-context changes as nodes, and what happened to each of them — launches, suspensions, dispatcher switches, exceptions
-and where they went, cancellation and who asked for it, blocked threads — in historical order, live or recorded.
+coroutree shows the **concurrency tree** of a Kotlin/JVM or mixed Kotlin and Java program, live or from a recorded trace.
+A Gradle plugin attaches a Java agent to your program. A desktop GUI shows threads, coroutines, scopes and context changes,
+with their launch, suspension, exception, cancellation and blocking history.
 
-A Gradle plugin attaches a Java agent to the JVMs your build forks; a desktop GUI shows what the agent saw.
+Runtime tracing, the graph and execution control are implemented. The standalone desktop GUI is in progress.
+[Planned milestones](docs/DESIGN.md#9-milestones) and [known gaps](docs/DESIGN.md#12-m1-as-built) are in the design.
+Static code analysis is out of scope.
 
-Design: [docs/DESIGN.md](docs/DESIGN.md). Trace format: [docs/TRACE_FORMAT.md](docs/TRACE_FORMAT.md).
-**Status: milestone 1 of 5** — the dynamic vertical slice, with the GUI drawing the tree as a graph (M1.1 in the
-design): a top-down node-link diagram, boxes coloured by state, cross-links (*launches*, *cancels*, *interrupts*, and
-*runs on* for the selected node) as edges of their own — and with **execution control** (M1.2): a running program can be
-slowed down, paused and stepped from the GUI. There is no static mode yet.
+## Graph and execution control
 
-In the graph: drag or scroll to pan, Ctrl/⌘ + scroll to zoom, *Fit* and *Selection* in the toolbar, the minimap once the
-graph is bigger than the pane. The legend switches each kind of cross-link on and off; *library / pools* brings in the
-dispatcher pools and library-internal coroutines that are left out by default. Rest on a box for its source line and
-context, right-click it to open its source in the IDE. Whatever the trace, boxes never overlap and no two lines run on
-or along each other: that is a tested invariant of the layout engine (DESIGN §6.2), not a matter of luck.
+Boxes show node state. Cross-links show launches, cancellation, interruption and the selected node's thread.
 
-**Slowing down, pausing, stepping.** While the GUI follows a running program, the bar under the title has *Pause* /
-*Resume* (Space), *Step* (→) and a speed slider, from one event in ten seconds to no limit. The same for one subtree is
-in a node's context menu and in the details pane; a node that carries a setting of its own has a small mark on its box.
-A few things worth knowing:
+| Control | Action |
+|---|---|
+| Drag or scroll | Pan |
+| Ctrl/⌘ + scroll | Zoom |
+| *Fit* / *Selection* | Fit the graph or selected node in the pane |
+| Minimap | Navigate a graph larger than the pane |
+| Legend | Toggle cross-link types |
+| *library / pools* | Show library-internal nodes and pools, hidden by default |
+| Hover / right-click a box | Inspect its source and context / open its source in the IDE |
 
-- A pace is **per sequence**: at "one event per second" every coroutine and every thread shows at most one event a second,
-  and ten of them running in parallel show ten. Nothing is serialised; two coroutines that share a thread are two
-  sequences. Time the program spends blocked or suspended of its own accord counts, so a coroutine that resumes after
-  `delay(5000)` is not held at all.
-- What is stopped is **events, not instructions**: a thread is held when it reaches its next event (a launch, a
-  suspension, a blocking call, …). A loop that computes without ever reaching one is not stopped by *Pause*.
-- **We hold threads, not coroutines.** A held coroutine keeps the thread it is on, and whatever else would run there
-  waits with it; pausing one child of a single-threaded `runBlocking` stops that event loop.
-- **Time is not held.** Pause for ten seconds inside `withTimeout(1000)` and it fires on release; slowing a program down
-  changes how its parallel parts interleave, which can hide or provoke a race.
-- The hold is never in the trace (no *blocked*, no event, no state): the trace says what the program did. What it does
-  say is how long each thread was held, and every change of the settings, which the event log shows.
-- If the GUI goes away, the program runs on at its configured pace; Ctrl-C ends a paused program as ever.
+For a live session, *Pause* / *Resume* (Space), *Step* (→) and the speed slider control the program.
+The slider ranges from one event in ten seconds to unlimited. Subtree controls are in the node's context menu and details pane.
+A mark on a box identifies a subtree setting.
+
+- Pace limits each sequence independently. Two coroutines remain separate sequences even on one thread.
+  Time spent blocked or suspended counts toward the interval.
+- Pause holds a thread at its next traced event. A loop without events continues.
+- A held coroutine occupies its thread. Pausing one child of a single-threaded `runBlocking` stops that event loop.
+- Wall-clock time continues. Timeouts can fire on release, and pacing can hide or cause races.
+- The trace records hold durations and setting changes. Holds create no blocking events or node states.
+- When the last controller disconnects, the program resumes at its configured pace and removes subtree settings.
+  Ctrl-C ends a paused program.
 
 ## Trying it
 
 ```sh
-./gradlew -p samples run -Psample=ExceptionPropagation -Pcoroutree    # run a sample program under the agent
-./gradlew -p samples coroutreeView                                    # open the GUI on the latest trace
-
-./gradlew -p samples run -Psample=Interactive -Pcoroutree             # a program that runs until you press Enter…
-./gradlew -p samples coroutreeView                                    # …watched live from a second terminal
-
-./gradlew -p samples run -Psample=PaceControl -Pcoroutree -Pcoroutree.pace.startPaused   # held at its first event…
-./gradlew -p samples coroutreeView                                    # …until you resume or step it here ("stop" + Enter ends it)
-./gradlew :coroutree-gui:run --args=--demo=live                       # the controls on a synthetic session, no JVM needed
+./gradlew -p samples coroutreeView
+./gradlew -p samples run -Psample=ExceptionPropagation -Pcoroutree
 ```
 
-`samples/` is a standalone build that uses the plugin, the agent and the GUI straight from this checkout. Its programs
-(`samples/src/main/kotlin/samples`, one per construct) are also the test corpus, with the trees they must produce in
-`samples/golden/dynamic`.
+Run these in separate terminals. The GUI lists traced JVMs and recent runs. Select the sample to open its trace.
+For a longer live run, use `-Psample=Interactive` and press Enter in its terminal to end it.
+For a paused start, use `-Psample=PaceControl -Pcoroutree.pace.startPaused`, then resume or step from the GUI.
+Type `stop` and Enter in the program's terminal to end it.
 
 ## Using it in a build
 
-Nothing is published yet; `./gradlew publishAllPublicationsToLocalRepository` fills `build/repo`, a Maven repository
+Nothing is published yet. `./gradlew publishAllPublicationsToLocalRepository` fills `build/repo`, a Maven repository
 with all the artifacts.
+Add it to your plugin and dependency repositories, or use the [sample composite build](samples/settings.gradle.kts).
 
 ```kotlin
 plugins {
@@ -66,62 +59,76 @@ plugins {
 }
 
 coroutree {
-    // All optional. The agent is attached to JavaExec and Test tasks when the build runs with -Pcoroutree.
     enabled = providers.gradleProperty("coroutree").isPresent
-    includePackages("com.acme")             // what counts as project code; default: the packages of the project's sources
+    includePackages("com.acme")             // Default: the project's source packages
     excludePackages("com.acme.generated")
-    live { enabled = true }                 // serve the trace to the GUI while the program runs
-    pace {                                  // execution control; controlling it from the GUI needs live
-        enabled = true                      // false: the JVM has no gate at all, and the GUI shows no controls
-        startPaused = false                 // true: held at the first event until a GUI resumes or steps
-        eventsPerSecond = 0.2               // the pace the run starts with, per sequence; unset = unlimited
+    live { enabled = true }                 // Default: true
+    pace {                                 // GUI control requires live
+        enabled = true                     // Default: true. false removes the gate and controls
+        startPaused = false                // Default: false. true holds at the first event
+        eventsPerSecond = 0.2              // Initial pace per sequence. Default: unlimited
     }
-    stackDepth = 32
-    ideCommand = "idea --line {line} {path}" // how the GUI opens a source location; default: IntelliJ's built-in server
+    stackDepth = 32                         // default: 32
+    ideCommand = "idea --line {line} {path}" // Default: IntelliJ's built-in server
+    sessionsDirectory = layout.buildDirectory.dir("coroutree/sessions") // Default: ~/.coroutree/sessions
 }
 ```
 
-What one wants to change for a single run is a Gradle property, and **the command line wins over the build script**, in
-both directions: `-Pcoroutree` / `-Pcoroutree=false`, `-Pcoroutree.live=false`, `-Pcoroutree.pace=false`,
-`-Pcoroutree.pace.startPaused`, `-Pcoroutree.pace.eventsPerSecond=2` (or `unlimited`). A value that does not parse fails
-the build. Started by hand, the agent takes `live`, `pace`, `pace.paused` and `pace.events.per.second` like its other options.
+All options are optional. By default, `-Pcoroutree` attaches the agent to `JavaExec` and `Test` tasks.
+Gradle properties override the build script:
 
-Apply it in every module whose sources should be navigable. Traces and live-session descriptors land in the root
-project's `build/coroutree/`, grouped by build invocation; `coroutreeView` opens the newest.
-
-Without Gradle: `java -javaagent:coroutree-agent.jar=trace.file=out.ctrace,include=com.acme -jar app.jar`, then
-`java -jar coroutree-gui-<version>-<os>.jar --trace out.ctrace`. Threads blocked on `synchronized` are reported by a small
-native (JVMTI) probe inside the agent jar. The Gradle plugin passes it as `-agentpath:`; started by hand, the agent loads
-it itself, which JDK 24+ comments on with a native-access warning — unpack
-`kotlinx/coroutree/agent/native/<platform>/` from the jar and add `-agentpath:<file>` to avoid that, or `monitor=false`
-to go without.
-
-The agent is a development tool. It records stacks and context values verbatim, costs a multiple of the run time in
-coroutine-heavy code, and expects to be the only agent touching coroutine internals (not together with
-kotlinx-coroutines-debug or the IDE debugger's coroutine agent). Supported: JDK 21+, kotlinx.coroutines 1.9 – 1.11;
-with another version it says so, and says loudly if the internals it hooks are not there.
-
-## Modules
-
-| | |
+| Property | Overrides |
 |---|---|
-| `coroutree-model` | The trace format (kotlinx.serialization protobuf) and the fold from events to a tree. Shared by the GUI, the tests and, later, the static mode. |
-| `coroutree-agent` | The Java agent. `main`: premain and ASM transformers. `runtime`: what instrumented code calls, on the bootstrap class path — plain Java without dependencies, including its own protobuf writer. `native`: the JVMTI monitor-contention probe, one C file. |
-| `coroutree-gradle-plugin` | DSL, agent wiring for `JavaExec`/`Test`, the source index that lets the GUI map stack frames to files, `coroutreeView`. Depends on nothing but Gradle. |
-| `coroutree-gui` | Compose Multiplatform Desktop app: the concurrency tree as a graph (own layout engine and edge router, with a checker for the drawing invariant), event log, details, open-in-IDE; recorded and live. |
-| `coroutree-integration-tests` | Runs the sample corpus under the real agent in forked JVMs: golden trees, the live stream, the plugin ↔ agent contract, three kotlinx.coroutines versions, an unsupported one, and the graph's drawing invariant on every sample's trace. |
-| `samples/` | The corpus, as a standalone build that uses the plugin. |
-| `spikes/` | Experiments behind design decisions; see [docs/spikes](docs/spikes). |
+| `-Pcoroutree` / `-Pcoroutree=false` | `enabled` |
+| `-Pcoroutree.live=false` | `live.enabled` |
+| `-Pcoroutree.pace=false` | `pace.enabled` |
+| `-Pcoroutree.pace.startPaused` | `pace.startPaused` |
+| `-Pcoroutree.pace.eventsPerSecond=2`, or `unlimited` | `pace.eventsPerSecond` |
+
+Invalid values fail the build, except that `-Pcoroutree` treats any value other than `false` as enabled.
+For a manually attached agent, the options are `live`, `pace`, `pace.paused` and `pace.events.per.second`.
+
+Apply the plugin in every module whose sources must be navigable. Traces go to the root project's `build/coroutree/`,
+grouped by build invocation. The GUI finds running JVMs and recent traces in `~/.coroutree/sessions/`.
+`sessionsDirectory` in the DSL, or the agent option `sessions.dir`, changes that directory for a build, on CI for
+example. Set empty, the agent option writes no descriptor.
+
+Without Gradle:
+
+```sh
+java -javaagent:coroutree-agent.jar=trace.file=out.ctrace,include=com.acme -jar app.jar
+java -jar coroutree-gui-<version>-<os>.jar --trace out.ctrace
+```
+
+The native probe reports `synchronized` contention. Gradle loads it with `-agentpath:`.
+A manually attached agent loads it itself, which causes a native-access warning on JDK 24 and later.
+To avoid the warning, unpack `kotlinx/coroutree/agent/native/<platform>/` from the agent jar and add `-agentpath:<file>`.
+The option `monitor=false` disables the probe.
+
+The agent is a development tool:
+
+- It records stacks and context values verbatim.
+- Coroutine-heavy code runs several times slower.
+- It must be the only agent that changes coroutine internals. Don't run it with kotlinx-coroutines-debug or with the
+  IDE debugger's coroutine agent.
+
+Supported: JDK 21 and later, kotlinx.coroutines 1.9 to 1.11. With another version of kotlinx.coroutines the agent
+reports a warning. If an internal that it hooks is missing, the agent reports an error.
 
 ## Working on it
 
 ```sh
 ./gradlew build                                              # everything, including all tests
-./gradlew :coroutree-integration-tests:test -PupdateGoldens  # rewrite samples/golden after a deliberate change; review the diff
+./gradlew :coroutree-integration-tests:test -PupdateGoldens  # rewrite samples/golden after an intended change, then review the diff
 ./gradlew :coroutree-gui:run --args="--demo"                 # the GUI on a synthetic trace (--demo=live streams it)
+./gradlew :coroutree-gui:hotRun --auto                       # Compose Hot Reload
 ./gradlew :coroutree-gui:test -PscreenshotTrace=/path/x.ctrace   # offscreen renders in coroutree-gui/build/screenshots
 ```
 
-Needs JDK 26 (the toolchain the build asks for) and, for the monitor probe, a C compiler as `cc` on the PATH (without
-one the build still passes, the agent just has no probe). Add `-Dcoroutree.debug=true` to a traced JVM to get the agent's own
-stack traces when it reports an internal error.
+The build needs JDK 26 as its toolchain. The monitor probe needs a C compiler as `cc` on the PATH. Without one the
+build passes, and the agent has no probe. Add `-Dcoroutree.debug=true` to a traced JVM to get the agent's own stack
+traces when it reports an internal error.
+
+Contributor references: [code map](CLAUDE.md#map), [design](docs/DESIGN.md), [trace format](docs/TRACE_FORMAT.md)
+and [repository guide](docs/onboarding/index.html).
+The sample corpus is in `samples/src/main/kotlin/samples`, with expected trees in `samples/golden/dynamic`.

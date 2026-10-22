@@ -17,29 +17,25 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Reports exceptions caught by project code: a call to {@code Hooks.exceptionCaught} at the start of every catch block
- * that handles something.
- *
- * Two kinds of handlers do not. Handlers of type "any" are how compilers implement {@code finally} and
- * {@code synchronized}: they rethrow. And some typed handlers are cleanup in disguise — Kotlin's {@code use} and
- * Java's try-with-resources catch {@code Throwable} only to close the resource and throw the same exception on;
- * reporting those would show every exception as "caught" once per resource it passes on its way up.
+ * Excludes cleanup handlers from exception-caught reports:
+ * <ul>
+ * <li>Untyped handlers implement {@code finally} or {@code synchronized} and rethrow.</li>
+ * <li>Typed handlers in Kotlin's {@code use} and Java's try-with-resources can also rethrow the original exception.</li>
+ * </ul>
  */
 final class CatchPatch {
     private CatchPatch() {}
 
-    /** How far a handler is followed before giving up on proving that it only rethrows. */
+    /** Maximum instructions examined to prove that a handler only rethrows. */
     private static final int MAX_STEPS = 400;
 
-    /** Returns whether anything was changed. */
     static boolean apply(ClassNode node) {
         boolean changed = false;
         for (MethodNode method : node.methods) {
             Set<LabelNode> done = new HashSet<>();
             for (TryCatchBlockNode block : method.tryCatchBlocks) {
                 if (block.type == null || !done.add(block.handler)) continue;
-                // The handler starts with the exception on the stack. Insert before its first real instruction: the
-                // stack map frame (and any further labels and line numbers) at the handler's offset must stay in front.
+                // Handler frames, labels, and line numbers must precede the inserted hook.
                 AbstractInsnNode first = firstReal(block.handler);
                 if (first == null || alwaysRethrows(first)) continue;
                 InsnList report = new InsnList();
@@ -59,10 +55,8 @@ final class CatchPatch {
     }
 
     /**
-     * Whether every way out of the handler is {@code throw e} of the very exception it caught: the handler stores the
-     * exception in a local, and every path from there ends in loading that local and throwing it. Paths that leave
-     * through an exception of their own (a failing {@code close()}) are not followed; they do not handle the original
-     * one either. When in doubt — a return, a switch, a handler too long to follow — the answer is no, and it is reported.
+     * Checks explicit paths for rethrows of the caught exception. Exceptions from cleanup calls aren't followed.
+     * A return, switch, or scan limit prevents proof, so the handler is reported as a catch.
      */
     private static boolean alwaysRethrows(AbstractInsnNode handlerStart) {
         if (handlerStart.getOpcode() != Opcodes.ASTORE) return false;

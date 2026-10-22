@@ -3,9 +3,8 @@ package kotlinx.coroutree.runtime;
 import java.lang.ref.WeakReference;
 
 /**
- * Runtime state of a coroutine, scope, context change or plain Job. Hangs off the job itself, see {@link Tagged}
- * (a coroutine without a Job: off its root frame, through a weak map), and must not keep application objects alive
- * longer than the job does.
+ * Attached to the job through {@link Tagged}, or weakly keyed by the root frame for a coroutine without a job.
+ * Must not extend the lifetime of application objects beyond the job.
  */
 final class JobNode extends PaceNode {
     static final int NEW = 0;
@@ -18,23 +17,22 @@ final class JobNode extends PaceNode {
     final boolean deferred;
 
     /**
-     * Who gets this node's failure thrown at them: the caller of a scope or of runBlocking. 0 for coroutines that
-     * report to their parent job instead. The node is {@code null} when the caller is a thread.
+     * The caller that receives a scope's or runBlocking's rethrown failure. Id 0 means failure goes to the parent job.
+     * {@code rethrowsTo} is null when the caller is a thread.
      */
     long rethrowsToId;
     JobNode rethrowsTo;
 
     /**
-     * For the gate: the same caller as a node, thread or not. This node runs in the caller's place while the caller
-     * waits for it, so what it does and what the caller does are one line of execution, one flow.
-     * Cleared, like {@code paceParent}, when the node ends; {@code null} without a gate.
+     * The caller shares this node's execution-control flow while it waits for the node.
+     * Cleared when the node ends. Null without a gate.
      */
     volatile PaceNode caller;
 
-    /** Described context elements, for diffing a child's context against this one. */
+    /** Described elements used to compare child contexts against this context. */
     ContextEntry[] context;
 
-    // Guarded by this. Transitions are driven by the debug probes, which may race across threads for one coroutine.
+    // Guarded by this because debug probes for one coroutine can race across threads.
     int run = NEW;
     long runThread;
     /** Suspensions already recorded on behalf of a thread that has yet to report them itself. */
@@ -43,13 +41,11 @@ final class JobNode extends PaceNode {
     volatile boolean cancelling;
     volatile boolean finished;
     /**
-     * Whether the node's definition (LAUNCHED or DISCOVERED) is in the trace. A job can make itself heard from inside
-     * its own constructor — attached to a parent that is already cancelled, it is cancelled on the spot — and then
-     * the node exists, and has events, before the constructor hook gets to define it.
+     * A job attached to a cancelled parent can emit events from its constructor before the constructor hook defines it.
      */
     volatile boolean defined;
 
-    // The library tells a parent about a failing child twice: when the child starts cancelling and when it is final.
+    // The library reports child failure twice: on cancellation and on completion.
     private WeakReference<Throwable> propagated;
     private WeakReference<Throwable> stopped;
     /** Failure of a scope this node called into, on its way to be rethrown in this node's code. */
@@ -77,7 +73,6 @@ final class JobNode extends PaceNode {
         return finished;
     }
 
-    /** Whether {@link #markPropagated} would say no. For a hook that wants to know before it waits at the gate. */
     synchronized boolean hasPropagated(Throwable exception) {
         return propagated != null && propagated.get() == exception;
     }
@@ -105,8 +100,7 @@ final class JobNode extends PaceNode {
     }
 
     /**
-     * Whether {@code failure} is the exception last received from a scope, thrown on. kotlinx.coroutines rethrows
-     * either the same instance or, with stack trace recovery, a copy whose cause is the original.
+     * With stack trace recovery, kotlinx.coroutines can rethrow a copy whose cause is the original exception.
      */
     boolean isRethrowOfReceived(Throwable failure) {
         WeakReference<Throwable> reference = received;

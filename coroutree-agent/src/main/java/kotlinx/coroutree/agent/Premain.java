@@ -26,7 +26,7 @@ public final class Premain {
             Agent.start(args, instrumentation);
         } catch (Throwable e) {
             // The application must run with or without us.
-            System.err.println("coroutree: agent failed to start, the program runs untraced: " + e);
+            System.err.println("coroutree: the agent failed to start, so the program runs untraced: " + e);
             if (Boolean.getBoolean("coroutree.debug")) e.printStackTrace();
         }
     }

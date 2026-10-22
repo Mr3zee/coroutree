@@ -98,6 +98,7 @@ class AgentConfigTest {
         val config = File(dir, "agent.properties")
         Properties().apply {
             setProperty("live", "false")
+            setProperty("sessions.dir", File(dir, "sessions").path)
             setProperty("include", "samples")
             setProperty("pace", "true")
             setProperty("pace.events.per.second", "0.5") // one event in two seconds: the run would take minutes
@@ -158,7 +159,7 @@ class AgentConfigTest {
     fun unwritableTraceLocationLeavesTheProgramAlone() {
         val blocker = File(TestEnvironment.workDir, "Unwritable").apply { deleteRecursively(); mkdirs() }.resolve("file").apply { writeText("") }
         val process = ProcessBuilder(
-            TestEnvironment.java, "-javaagent:${TestEnvironment.agentJar}=trace.file=${File(blocker, "sub/trace.ctrace")}",
+            TestEnvironment.java, "-javaagent:${TestEnvironment.agentJar}=trace.file=${File(blocker, "sub/trace.ctrace")},sessions.dir=${File(blocker.parentFile, "sessions")}",
             "-cp", TestEnvironment.samplesClasspath, "samples.StructuredConcurrencyKt",
         ).redirectErrorStream(true).start()
         val output = process.inputStream.bufferedReader().readText()
