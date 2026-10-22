@@ -4,7 +4,7 @@ coroutree shows the **concurrency tree** of a Kotlin/JVM or mixed Kotlin and Jav
 A Gradle plugin attaches a Java agent to your program. A desktop GUI shows threads, coroutines, scopes and context changes,
 with their launch, suspension, exception, cancellation and blocking history.
 
-Runtime tracing, the graph and execution control are implemented. The standalone desktop GUI is in progress.
+Runtime tracing, the graph, execution control and the standalone desktop GUI are implemented.
 [Planned milestones](docs/DESIGN.md#9-milestones) and [known gaps](docs/DESIGN.md#12-m1-as-built) are in the design.
 Static code analysis is out of scope.
 

@@ -3,8 +3,8 @@
 coroutree records the concurrency tree of Kotlin/JVM and mixed Kotlin and Java programs for a standalone desktop GUI.
 It supports live and recorded traces. Static code analysis is out of scope.
 
-M1 (runtime tracing), M1.1 (the graph) and M1.2 (execution control) are implemented.
-The standalone desktop GUI is in progress. M2 to M6 aren't started (§9).
+M1 (runtime tracing), M1.1 (the graph), M1.2 (execution control) and the standalone desktop GUI are implemented.
+M2 to M6 aren't started (§9).
 Items marked **[assumed]** lack the owner's confirmation. The implementation follows them.
 
 ## 1. Decisions at a glance
@@ -225,6 +225,39 @@ Runtime warning badges will identify:
 Badges will appear in a filterable list and won't fail the build.
 Runtime `awaits` / `joins` links and the gaps in §12 also have no assigned milestone.
 
+Plausible work that no milestone or gap names. None of it is decided.
+
+Capture:
+
+- `Mutex` and `Semaphore` from `kotlinx.coroutines.sync`, and `ReentrantLock`, `CountDownLatch`, `Phaser` and the
+  other `java.util.concurrent` synchronizers. They appear as a plain suspend or park, with no owner or waits-on link.
+  Only monitors get contention edges.
+- `Dispatchers.Main` and the Swing and JavaFX dispatchers, `limitedParallelism` views,
+  `kotlinx-coroutines-test` (`runTest`, `TestDispatcher`), and the result values of `Deferred`.
+- Segmentation of a `Test` task's tree by test class and method. The plugin attaches to `Test` tasks, but the tree
+  has no test boundaries.
+- Instrumentation scoping: include and exclude filters at capture time, a bounded ring buffer, and compression. The
+  user manages trace size, with no tool for it.
+- JFR events alongside the trace, for correlation with other profilers.
+
+Execution control:
+
+- Conditional pause: on an exception, a source site, a node kind or a `CoroutineName`. A breakpoint for concurrency.
+  The gate's hold point exists. The condition and its command are missing.
+
+Analysis and views:
+
+- Deadlock and lock-cycle detection, and leak detection: a scope or thread that never completes.
+- Aggregates: time per dispatcher, suspension and blocking time per node, counts per event kind. M5 only filters.
+- A timeline or swimlane view with time on the x axis. §6.1 forbids an indented outline, not a time view.
+- A diff of two traces of the same program in the GUI. The goldens do this in text.
+- A headless command that prints a trace as `TreeRenderer` text, for CI, scripts and coding agents.
+
+Distribution:
+
+- A Maven or plain `-javaagent` recipe, and IDE run-configuration integration.
+- CI on Linux and Windows.
+
 ## 6. GUI (Compose Multiplatform Desktop)
 
 The GUI opens recorded traces and finds live JVMs through the session registry.
@@ -322,7 +355,7 @@ The [repository guide](onboarding/index.html#code-map) has a task-based source b
 | M1 | Done | Runtime tracing, source navigation, live and recorded input, jobless coroutines and inline source maps |
 | M1.1 | Done | Graph, layout invariant, navigation and linked selection |
 | M1.2 | Done | Global and subtree execution control |
-| Standalone desktop GUI | In progress | Session registry, start screen, live follow and reconnect |
+| Standalone desktop GUI | Done | Session registry, start screen, live follow and reconnect |
 
 Remaining milestones, in priority order:
 
@@ -465,6 +498,8 @@ screen.
   Releases must combine platforms with `-Pcoroutree.prebuiltNatives=<dir>`. Only macOS arm64 has run end to end.
   A missing or unloadable binary causes a diagnostic, and capture continues without monitor contention.
 - Only the first copy of kotlinx.coroutines in a JVM is traced. Copies in other class loaders are ignored.
+- Late attach can't work. kotlinx.coroutines classes are patched at load (`Tagged` on `JobSupport` changes their shape),
+  and a JVM where they are already loaded can't retransform them.
 - Recorded files are read once. Follow a running JVM through the live socket.
 - The plugin reads the root project's build directory from each project, which prevents project isolation.
 - Dependency source indexes use conventional runtime-classpath names. A custom KMP target such as `jvm("desktop")` lacks dependency sources.
