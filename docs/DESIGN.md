@@ -257,6 +257,9 @@ The scrubber will inspect history independently of execution controls, including
   Selecting a hidden node through the log or details enables the *library / pools* toggle.
 - The graph supports no per-node collapse or same-site aggregation. Use pan, zoom, Fit, Selection and the minimap for navigation.
   The minimap appears when the graph exceeds the pane. Zoom ranges from fit to 3×.
+  Ctrl/⌘ + wheel and the macOS trackpad pinch zoom around the pointer. One wheel event zooms by at most two units,
+  because a trackpad flick reports tens of units in one event. AWT reports the pinch only through `com.apple.eawt.event`,
+  which the GUI reaches by reflection, so other platforms have no pinch.
 - Only visible geometry is drawn. Below 35% zoom or above 700 visible boxes, the canvas replaces box composables.
 - Changed layouts animate for 320 ms and anchor the selected node, or the node nearest the viewport center.
   Until manual navigation, the viewport fits the whole graph. Fit restores that mode.

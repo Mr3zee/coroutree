@@ -232,9 +232,30 @@ class GraphPaneUiTest {
             }
         }
         waitForIdle()
-        assertTrue(view.viewport.zoom > before.zoom * 1.5f, "${view.viewport}")
+        assertTrue(view.viewport.zoom > before.zoom * 1.15f, "${view.viewport}")
         val after = onCanvas(main.id)
         assertTrue(abs(after.x - pointer.x) < 1f && abs(after.y - pointer.y) < 1f, "what was under the pointer still is: $pointer → $after")
+    }
+
+    /** A trackpad flick is one event with tens of units; it zooms no further than a steady two. */
+    @Test
+    fun aWheelEventZoomsByABoundedStep() = test {
+        val before = view.viewport.zoom
+        var flicked = 0f
+        onNodeWithTag("graph").performKeyInput {
+            withKeyDown(Key.MetaLeft) {
+                this@test.onNodeWithTag("graph").performMouseInput {
+                    moveTo(Offset(300f, 200f))
+                    scroll(-40f)
+                }
+                flicked = view.viewport.zoom / before
+                this@test.onNodeWithTag("graph").performMouseInput { scroll(-2f) }
+            }
+        }
+        waitForIdle()
+        val stepped = view.viewport.zoom / before / flicked
+        assertEquals(flicked, stepped, 0.001f)
+        assertTrue(flicked in 1.1f..1.3f, "$flicked")
     }
 
     /** README: "Click a box: select it. Double-click a box: open its source in the IDE". The first click doesn't wait for a second. */

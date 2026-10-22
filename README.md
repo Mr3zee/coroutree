@@ -15,7 +15,7 @@ Boxes show node state. Cross-links show launches, cancellation, interruption and
 | Control | Action |
 |---|---|
 | Drag or scroll | Pan |
-| Ctrl/⌘ + scroll | Zoom |
+| Ctrl/⌘ + scroll, or pinch on a macOS trackpad | Zoom around the pointer |
 | *Fit* / *Selection* | Fit the graph or selected node in the pane |
 | Minimap | Navigate a graph larger than the pane |
 | Legend | Toggle cross-link types |

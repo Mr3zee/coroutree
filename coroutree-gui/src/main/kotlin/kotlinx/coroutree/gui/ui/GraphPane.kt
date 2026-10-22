@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -24,7 +25,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.awt.LocalAwtWindow
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -39,6 +42,7 @@ import kotlinx.coroutree.gui.view.GraphViewState
 import kotlinx.coroutree.gui.view.TraceViewModel
 import kotlinx.coroutree.gui.view.graph.EdgeKind
 import kotlinx.coroutree.gui.view.graph.NodeBox
+import javax.swing.RootPaneContainer
 import kotlin.math.exp
 
 private const val GLIDE_MILLIS = 320
@@ -53,10 +57,18 @@ private const val CULL_MARGIN = 160
 private const val SCROLL_STEP = 48f
 
 /**
+ * Zoom for one unit of Ctrl/⌘ + wheel. A mouse notch is one unit. A trackpad reports its movement in tenths of a pixel
+ * and sends tens of units in one event when it is flicked, so an event counts at most [WHEEL_ZOOM_CLAMP] units.
+ */
+private const val WHEEL_ZOOM_RATE = 0.1f
+private const val WHEEL_ZOOM_CLAMP = 2f
+
+/**
  * The concurrency tree as a graph (DESIGN §6.1): toolbar and legend on top, below them the canvas with the edges, the
  * boxes over it, the minimap in a corner. Where things are is the business of `view/`: the layout engine says where
  * every box and line goes, [GraphViewState] how that maps to the pane and how it changes; this only draws and listens.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun GraphPane(viewModel: TraceViewModel, onOpenNode: (Long) -> Unit, modifier: Modifier = Modifier) {
     val state = viewModel.graphView
@@ -83,6 +95,21 @@ fun GraphPane(viewModel: TraceViewModel, onOpenNode: (Long) -> Unit, modifier: M
     }
 
     var pointer by remember { mutableStateOf(Offset.Zero) }
+    var pointerInside by remember { mutableStateOf(false) }
+
+    // A pinch comes from AWT with no position and for the whole window: it zooms where the pointer was last seen,
+    // and only while that is over the canvas.
+    val window = LocalAwtWindow.current as? RootPaneContainer
+    DisposableEffect(window, state) {
+        val uninstall = window?.let { w ->
+            MacTrackpad.onMagnify(w.rootPane) { magnification ->
+                if (!pointerInside) return@onMagnify
+                hover.dismiss()
+                state.zoom(1 + magnification.toFloat(), pointer.x / density, pointer.y / density)
+            }
+        }
+        onDispose { uninstall?.invoke() }
+    }
 
     Column(modifier.background(palette.surface)) {
         PaneHeader("Concurrency tree") { GraphToolbar(viewModel, state) }
@@ -108,11 +135,16 @@ fun GraphPane(viewModel: TraceViewModel, onOpenNode: (Long) -> Unit, modifier: M
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull() ?: continue
                                 pointer = change.position
+                                when (event.type) {
+                                    PointerEventType.Enter -> pointerInside = true
+                                    PointerEventType.Exit -> pointerInside = false
+                                }
                                 if (event.type != PointerEventType.Scroll) continue
                                 hover.dismiss()
                                 val delta = change.scrollDelta
                                 if (event.keyboardModifiers.isCtrlPressed || event.keyboardModifiers.isMetaPressed) {
-                                    state.zoom(exp(-delta.y * 0.2f), change.position.x / density, change.position.y / density)
+                                    val units = delta.y.coerceIn(-WHEEL_ZOOM_CLAMP, WHEEL_ZOOM_CLAMP)
+                                    state.zoom(exp(-units * WHEEL_ZOOM_RATE), change.position.x / density, change.position.y / density)
                                 } else {
                                     state.pan(-delta.x * SCROLL_STEP, -delta.y * SCROLL_STEP)
                                 }
