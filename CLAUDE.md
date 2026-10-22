@@ -23,6 +23,7 @@ Each line below is a `commandLine`. `projectRoot` is always the repository root 
 [":coroutree-gui:launch"]                                          builds coroutree-gui/build/coroutree-gui.jar and starts the standalone GUI (detached). `bin/coroutree-gui [args]` in a shell does the same, foreground
 [":coroutree-gui:run", "--args=--demo"]            background      GUI on a synthetic trace (--demo=live streams it, with execution control)
 [":coroutree-gui:hotRun", "--auto"]                background      the GUI with Compose Hot Reload (JetBrains Runtime, downloaded by foojay)
+[":coroutree-gui:launchHot"]                                       the same, detached: a Gradle of its own stays behind the GUI, output in coroutree-gui/build/coroutree-gui-hot.log
 ["-p", "samples", "run", "-Psample=<Name>", "-Pcoroutree"]         a sample through the real plugin + agent
       + "-Pcoroutree.pace.startPaused", "-Pcoroutree.pace.eventsPerSecond=2", "-Pcoroutree.pace=false", "-Pcoroutree.live=false"
 ["-p", "samples", "coroutreeView"]                 background      the GUI, which lists the JVMs under the agent (~/.coroutree/sessions) and recent runs

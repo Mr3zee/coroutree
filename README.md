@@ -136,6 +136,7 @@ reports a warning. If an internal that it hooks is missing, the agent reports an
 ./gradlew :coroutree-gui:launch                             # build coroutree-gui/build/coroutree-gui.jar and start the GUI in the background
 ./gradlew :coroutree-gui:run --args="--demo"                 # the GUI on a synthetic trace (--demo=live streams it)
 ./gradlew :coroutree-gui:hotRun --auto                       # Compose Hot Reload
+./gradlew :coroutree-gui:launchHot                           # the same, in the background
 ./gradlew :coroutree-gui:test -PscreenshotTrace=/path/x.ctrace   # offscreen renders in coroutree-gui/build/screenshots
 ```
 

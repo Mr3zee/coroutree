@@ -160,6 +160,25 @@ tasks.register("launch") {
     }
 }
 
+// hotRun --auto, detached: a Gradle of its own stays behind the GUI and recompiles what changes (that is how hot reload
+// works), while this build ends at once. Its output goes to build/coroutree-gui-hot.log.
+tasks.register("launchHot") {
+    group = "application"
+    description = "Starts the GUI with Compose Hot Reload in the background (hotRun --auto)."
+    outputs.upToDateWhen { false }
+    val root = rootProject.layout.projectDirectory.asFile
+    val wrapper = File(root, if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "gradlew.bat" else "gradlew")
+    val log = layout.buildDirectory.file("coroutree-gui-hot.log")
+    doLast {
+        ProcessBuilder(wrapper.path, "-p", root.path, ":coroutree-gui:hotRun", "--auto")
+            .directory(root)
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.appendTo(log.get().asFile))
+            .start()
+        logger.lifecycle("coroutree GUI with hot reload started. Its output goes to ${log.get().asFile}")
+    }
+}
+
 publishing {
     publications {
         create<MavenPublication>("gui") {
