@@ -20,6 +20,7 @@ Each line below is a `commandLine`. `projectRoot` is always the repository root 
 [":coroutree-integration-tests:test", "-PupdateGoldens"]           rewrite samples/golden/dynamic, then REVIEW the diff
 [":coroutree-gradle-plugin:check"]                                 unit + TestKit functional tests + validatePlugins
 [":coroutree-gui:test"] (+ "-PscreenshotTrace=/x.ctrace")          also renders coroutree-gui/build/screenshots/*.png: look at them
+[":coroutree-gui:launch"]                                          builds coroutree-gui/build/coroutree-gui.jar and starts the standalone GUI (detached). `bin/coroutree-gui [args]` in a shell does the same, foreground
 [":coroutree-gui:run", "--args=--demo"]            background      GUI on a synthetic trace (--demo=live streams it, with execution control)
 [":coroutree-gui:hotRun", "--auto"]                background      the GUI with Compose Hot Reload (JetBrains Runtime, downloaded by foojay)
 ["-p", "samples", "run", "-Psample=<Name>", "-Pcoroutree"]         a sample through the real plugin + agent
@@ -35,7 +36,7 @@ JDK 26 toolchain, Gradle 9.7.1 wrapper, Kotlin 2.4.20, configuration cache on. `
 | Module | What | Notes |
 |---|---|---|
 | `coroutree-model` | Wire model (`Trace.kt`, kotlinx.serialization protobuf), `TraceReader/Writer`, `tree/TraceStore` (fold events → tree, snapshots), `tree/Labels.kt` (all wording), `tree/TreeRenderer` (golden text) | JVM 17 bytecode, `explicitApi()` |
-| `coroutree-agent` | `src/runtime`: bootstrap-class-path runtime (`Hooks`, `Tracer`, `TraceEncoder`, writer thread, `LiveServer`). `src/main`: `Premain`, ASM tree-API patches, **`HookTable`** (the one place that names JDK / kotlinx.coroutines internals). `src/native`: JVMTI monitor probe (C). `src/test/kotlin`: the unit tests | plain Java, release 21. Only ASM is shaded. The tests are Kotlin; the fixtures that stand in for JDK, kotlinx or application classes (`src/test/java`) stay Java |
+| `coroutree-agent` | `src/runtime`: bootstrap-class-path runtime (`Hooks`, `Tracer`, `TraceEncoder`, writer thread, `LiveServer`). `src/main`: `Premain`, ASM tree-API patches, **`HookTable`** (the one place that names JDK / kotlinx.coroutines internals). `src/native`: JVMTI monitor probe (C). `src/test/kotlin`: the unit tests | plain Java, release 21. Only ASM is shaded. The tests are Kotlin. The fixtures that stand in for JDK, kotlinx or application classes (`src/test/java`) stay Java |
 | `coroutree-gradle-plugin` | DSL, `-javaagent`/`-agentpath` arguments for `JavaExec`/`Test`, source index, `coroutreeView` | depends on the Gradle API only. Kotlin api/language 2.2, so it runs in Gradle 9.0+ |
 | `coroutree-gui` | Compose Desktop, a standalone app: `source/` (feeds, the session registry `~/.coroutree/sessions` that every agent writes to and the GUI polls), `view/` (testable logic: `GraphBuilder` snapshot → graph, `GraphViewState` viewport and glide, `TraceViewModel`), `view/graph/` (pure geometry: `LayoutEngine` = tidy forest + orthogonal router, `InvariantChecker`), `ui/` (composables), `demo/` | uber jars for each OS, published under classifiers |
 | `coroutree-integration-tests` | Runs `samples/` under the real agent jar in forked JVMs. Also lays out every sample's trace and checks the drawing invariant (`GraphInvariantCorpusTest`) | its main source set *is* `samples/src` |
@@ -70,7 +71,7 @@ writer thread → `.ctrace` file. Live clients are threads that tail that file o
   `DISCOVERED`, which is a step of its own with its own `await`, so all finding comes first. The call comes before the
   hook reads what it reports, decides or locks anything. Never wait in `Tracer.emit` (events are emitted under
   `synchronized (node)` and `DISCOVERY_LOCK`), and never for the writer or a reader.
-- Stopping the program is ours to get right, the owner's top priority. The hold is **never recorded**: no
+- A correct hold is the owner's top priority. The hold is **never recorded**: no
   `THREAD_BLOCKED`, interrupt, unmount, node state or "held" marker of our making. The trace records `heldNanos` and
   `PaceDef`. The hold **never disturbs state**: the interrupt flag is cleared for the wait and restored, bookkeeping
   stays balanced, nothing is thrown, and the park permit is untouched.
@@ -81,8 +82,8 @@ writer thread → `.ctrace` file. Live clients are threads that tail that file o
   the last controller is gone.
 - Threads of the JVM itself (the root thread group) are never held: the Signal Dispatcher starts the SIGTERM handler
   with `Thread.start`.
-- Whatever an agent thread runs to deliver a command must not be blockable by a held thread: no regex, no first-time
-  class loading. Those paths are warmed up at start.
+- A held thread must not be able to block an agent thread that delivers a command: no regex, no first-time class
+  loading on that path. `Agent.warmUp` runs those paths at start.
 - Never introduce a global order of turns. A pace is a minimum interval for each sequence, measured between events (the
   program's own blocking counts). Parallel stays parallel, two coroutines on one thread included. The events of one
   hook call are one step and are never spread out. A hook that emits on a node of another sequence awaits that node
@@ -92,7 +93,7 @@ writer thread → `.ctrace` file. Live clients are threads that tail that file o
   runs where a thread can't wait has none.
 - `Tracer.emit` records an ERROR for an event that didn't pass the gate. With `-Dcoroutree.debug` (every test JVM) the
   agent checks at each thread's end that its blocking calls are balanced. Both fail the goldens.
-- Time isn't held. A sample whose tree rests on wall-clock margins is listed, with the reason, in
+- Time isn't held. A sample whose tree depends on wall-clock margins is listed, with the reason, in
   `PacedCorpusTest.WALL_CLOCK_SENSITIVE`. A new sample with `sleep`-ordered threads or a `delay` outside an event loop
   goes there.
 - The `PaceControl` sample is the program that the end-to-end tests of execution control drive.

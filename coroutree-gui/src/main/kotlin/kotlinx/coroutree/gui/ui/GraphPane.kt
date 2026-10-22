@@ -7,7 +7,6 @@ import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +39,6 @@ import kotlinx.coroutree.gui.view.GraphViewState
 import kotlinx.coroutree.gui.view.TraceViewModel
 import kotlinx.coroutree.gui.view.graph.EdgeKind
 import kotlinx.coroutree.gui.view.graph.NodeBox
-import kotlinx.coroutree.model.StackFrameDef
 import kotlin.math.exp
 
 private const val GLIDE_MILLIS = 320
@@ -60,7 +58,7 @@ private const val SCROLL_STEP = 48f
  * every box and line goes, [GraphViewState] how that maps to the pane and how it changes; this only draws and listens.
  */
 @Composable
-fun GraphPane(viewModel: TraceViewModel, onOpenFrame: (StackFrameDef) -> Unit, modifier: Modifier = Modifier) {
+fun GraphPane(viewModel: TraceViewModel, onOpenNode: (Long) -> Unit, modifier: Modifier = Modifier) {
     val state = viewModel.graphView
     val layout = viewModel.layout
     val density = LocalDensity.current.density
@@ -84,10 +82,6 @@ fun GraphPane(viewModel: TraceViewModel, onOpenFrame: (StackFrameDef) -> Unit, m
         }
     }
 
-    fun openSite(nodeId: Long) {
-        viewModel.snapshot.node(nodeId)?.info?.siteFrame?.let(viewModel.snapshot::frame)?.let(onOpenFrame)
-    }
-
     var pointer by remember { mutableStateOf(Offset.Zero) }
 
     Column(modifier.background(palette.surface)) {
@@ -96,9 +90,8 @@ fun GraphPane(viewModel: TraceViewModel, onOpenFrame: (StackFrameDef) -> Unit, m
         Divider()
         ContextMenuArea(items = {
             val id = state.nodeAt(pointer.x / density, pointer.y / density) ?: return@ContextMenuArea emptyList()
-            val site = viewModel.snapshot.node(id)?.info?.siteFrame?.let(viewModel.snapshot::frame)
-            listOfNotNull(
-                site?.let { ContextMenuItem("Open in IDE") { onOpenFrame(it) } },
+            listOf(
+                ContextMenuItem("Open in IDE") { onOpenNode(id) },
                 ContextMenuItem("Zoom to node") {
                     viewModel.selectNode(id)
                     state.zoomTo(id)
@@ -134,16 +127,18 @@ fun GraphPane(viewModel: TraceViewModel, onOpenFrame: (StackFrameDef) -> Unit, m
                             state.pan(drag.x / density, drag.y / density)
                         }
                     }
-                    .pointerInput(state) {
-                        // Boxes with a composable of their own take their clicks; this gets the rest: small boxes and the background.
-                        detectTapGestures { position ->
+                    // Boxes with a composable of their own take their clicks; this gets the rest: small boxes and the background.
+                    .clicks(
+                        state,
+                        onClick = { position ->
                             val id = state.nodeAt(position.x / density, position.y / density)
                             if (id != null) viewModel.selectNode(id) else viewModel.clearSelection()
-                        }
-                    },
+                        },
+                        onDoubleClick = { position -> state.nodeAt(position.x / density, position.y / density)?.let(onOpenNode) },
+                    ),
             ) {
                 GraphEdges(viewModel, state, drawBoxes = detailed == null)
-                detailed?.let { boxes -> GraphNodes(viewModel, state, boxes, hover) }
+                detailed?.let { boxes -> GraphNodes(viewModel, state, boxes, hover, onOpenNode) }
                 if (state.layout.isEmpty) {
                     val hidden = viewModel.graph.hiddenNodes
                     Label(
@@ -154,7 +149,7 @@ fun GraphPane(viewModel: TraceViewModel, onOpenFrame: (StackFrameDef) -> Unit, m
                     // While the pane follows the graph all of it is in view, or will be when the glide ends.
                     Minimap(viewModel, state, Modifier.align(Alignment.BottomEnd).padding(10.dp))
                 }
-                HoverCard(viewModel, state, hover, ::openSite)
+                HoverCard(viewModel, state, hover, onOpenNode)
             }
         }
     }

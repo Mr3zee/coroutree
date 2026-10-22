@@ -10,9 +10,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * The agent's options as a user writes them on `-javaagent:` by hand. Whatever is written there, the program
- * runs: a bad option is a problem to report once tracing is up, never an exception. (The form the Gradle plugin writes
- * is pinned end to end by AgentConfigTest of the integration tests; the options of execution control by PaceTest.)
+ * The agent's options as a user writes them by hand on `-javaagent:`. Parsing never throws: a bad option goes into
+ * `problems`, which the agent reports after tracing starts, and the program runs. The form that the Gradle plugin
+ * writes is tested in `AgentConfigTest` of the integration tests, and the options of execution control in [PaceTest].
  */
 internal class AgentOptionsTest {
     @Test
@@ -53,7 +53,7 @@ internal class AgentOptionsTest {
 
     @Test
     fun aConfigFileComesFirstAsAWholeOrAnywhereElseBelowTheInlineOptions(@TempDir dir: Path) {
-        // The form of the Gradle plugin: nothing but the file, taken whole because a path may contain a comma.
+        // The plugin's form: `config=` alone, so the whole argument is the path, commas included.
         val file = Files.createDirectories(dir.resolve("build,with=odd chars")).resolve("agent.properties")
         Files.writeString(file, "build.id=from-file\nstack.depth=5\ninclude=com.acme,org.acme\ntask.path=:app:tést\n", Charsets.UTF_8)
         val whole = AgentConfig.parse("config=$file")
@@ -81,7 +81,7 @@ internal class AgentOptionsTest {
 
     @Test
     fun projectPackagesArePrefixesOfPackagesNotOfStrings() {
-        // Inline, a list within the list of options is separated with ; or :, and patterns may be written the way people write them.
+        // An inline list is separated with `;` or `:`, because `,` separates the options. A prefix can end in `.` or `*`.
         val config = AgentConfig.parse("include=com.acme.*;org.acme.: net.acme.. ,exclude=com.acme.generated;;*")
         assertEquals(listOf("com.acme", "org.acme", "net.acme"), config.includePackages)
         assertEquals(listOf("com.acme.generated"), config.excludePackages)
@@ -97,8 +97,8 @@ internal class AgentOptionsTest {
         assertTrue(config.isProjectClassInternalName("org/acme/web/Handler"))
         assertFalse(config.isProjectClassInternalName("org/acmeweb/Handler"))
 
-        // Without include, everything that is not excluded is the project's for the origin of a node; but instrumenting
-        // "project classes" would then mean every class there is, so no class is one for the transformer.
+        // Without `include`, every class that isn't excluded is the project's for the origin of a node. None is for the
+        // transformer, because it would otherwise instrument every class.
         val all = AgentConfig.parse("exclude=org.lib")
         assertFalse(all.hasProjectPackages())
         assertTrue(all.isProjectClass("anything.At.All"))

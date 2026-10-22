@@ -43,7 +43,7 @@ class GuiFollowsLiveJvmTest {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             while (source !is TraceSource.Session && System.nanoTime() < deadline) {
                 Thread.sleep(20)
-                source = registry.latest() // nothing at first: the agent publishes its session once it listens
+                source = registry.latest() // nothing at first: the agent writes its descriptor when its server listens
             }
             assertIs<TraceSource.Session>(source, "the session of the running JVM was not found in ${registry.dir}")
             assertEquals(process.pid(), source.info.pid)

@@ -9,14 +9,15 @@ import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * What a job's node remembers about exceptions, so that one exception on its way through the tree is told once per
- * place it passes — and remembers weakly: a node must not keep application objects alive longer than the job does.
+ * The exceptions that a job's node remembers, so that one exception is reported once at each node it passes on its
+ * way through the tree. The node holds them weakly: it must not keep application objects alive longer than the job
+ * does.
  */
 @Timeout(60)
 internal class JobNodeTest {
     @Test
     fun anExceptionIsPropagatedToTheParentOnceThoughTheLibraryTellsTheParentTwice() {
-        // kotlinx.coroutines tells a parent about a failing child when the child starts cancelling and when it is final.
+        // kotlinx.coroutines reports a failing child to its parent twice: when the child starts cancelling and when it is final.
         val child = node()
         val failure = IllegalStateException("boom")
         val another = IllegalStateException("boom")
@@ -27,7 +28,7 @@ internal class JobNodeTest {
         assertFalse(child.hasPropagated(another), "equal is not the same: exceptions are followed by identity")
         assertTrue(child.markPropagated(another))
 
-        // Stopping at a supervisor is a fact of its own, told once as well.
+        // A stop at a supervisor is a separate report, also once.
         assertFalse(child.hasStopped(another))
         assertTrue(child.markStopped(another))
         assertFalse(child.markStopped(another))
@@ -36,8 +37,8 @@ internal class JobNodeTest {
 
     @Test
     fun anExceptionAScopeThrewAtItsCallerIsRecognisedWhenTheCallerEndsWithIt() {
-        // The caller's rethrow is not reported a second time as thrown. kotlinx.coroutines rethrows either the same
-        // instance or, with stack trace recovery, a copy whose cause is the original.
+        // The caller's rethrow isn't reported as thrown a second time. kotlinx.coroutines rethrows the same instance
+        // or, with stack trace recovery, a copy whose cause is the original.
         val caller = node()
         val original = IllegalStateException("from the scope")
         assertFalse(caller.isRethrowOfReceived(original), "nothing was received yet")
@@ -48,13 +49,13 @@ internal class JobNodeTest {
         assertFalse(caller.isRethrowOfReceived(IllegalStateException("from the scope")), "the caller's own exception that happens to read the same")
         assertFalse(caller.isRethrowOfReceived(null))
 
-        // A chain of causes that leads back into itself is application data like any other.
+        // A cycle of causes is application data like any other: the check ends.
         val a = RuntimeException("a")
         val b = RuntimeException("b", a)
         a.initCause(b)
         assertFalse(caller.isRethrowOfReceived(a))
 
-        // The latest one counts.
+        // The latest received exception counts.
         val later = IllegalArgumentException("from another scope")
         caller.markReceived(later)
         assertTrue(caller.isRethrowOfReceived(later))

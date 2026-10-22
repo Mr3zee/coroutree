@@ -19,7 +19,7 @@ data class SessionInfo(
     val startedAt: Long,
     val ended: Boolean,
     val paceable: Boolean = false,
-    /** The agent was configured for a socket and could not open one. The trace carries the reason as a warning. */
+    /** The agent was configured for a socket and couldn't open one. The trace carries the reason as a warning. */
     val liveFailed: Boolean = false,
 ) {
     val title: String get() = listOf(taskPath, command).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "pid $pid" }
@@ -50,7 +50,7 @@ data class SessionInfo(
         const val CONNECT_TIMEOUT_MILLIS = 1000
 
         fun parse(text: String, file: File? = null): SessionInfo {
-            val json = FlatJson.parse(text)
+            val json = Json.parse(text)
             fun string(key: String) = json[key] as? String ?: ""
             fun long(key: String) = (json[key] as? Number)?.toLong() ?: 0L
             return SessionInfo(
@@ -108,7 +108,8 @@ class SessionRegistry(val dir: File = defaultDir()) {
             .sortedByDescending { it.startedAt }
 
     /**
-     * Crashed JVMs leave descriptors unchanged, so running status requires a live process and a reachable socket, if configured.
+     * A crashed JVM leaves its descriptor without an end marker. So a session is [SessionState.RUNNING] only when
+     * its process is alive and its socket, if it has one, answers.
      */
     fun entries(reachable: (SessionInfo) -> Boolean = ::isReachable): List<SessionEntry> = sessions().map { info ->
         val state = when {
@@ -128,8 +129,8 @@ class SessionRegistry(val dir: File = defaultDir()) {
     }
 
     /**
-     * Deletes ended sessions with missing traces and all but the newest [keep] remaining ended sessions.
-     * Sessions of JVMs that exist are never deleted, reachable or not.
+     * Deletes the descriptors of JVMs that are gone whose trace file is missing, and all but the newest [keep] of
+     * the rest. A descriptor whose JVM exists is never deleted, reachable or not.
      */
     fun prune(keep: Int = KEEP, reachable: (SessionInfo) -> Boolean = ::isReachable): Int {
         var deleted = 0
@@ -156,7 +157,7 @@ class SessionRegistry(val dir: File = defaultDir()) {
             return session.startedAt <= 0 || abs(started.toEpochMilli() - session.startedAt) <= PID_REUSE_MARGIN_MILLIS
         }
 
-        // The probe doesn't authenticate, so the agent closes it without replaying the trace.
+        // The probe doesn't authenticate, so the agent closes it without a replay of the trace.
         fun isReachable(session: SessionInfo): Boolean = session.live && try {
             Socket().use { it.connect(InetSocketAddress(InetAddress.getLoopbackAddress(), session.port), 300) }
             true

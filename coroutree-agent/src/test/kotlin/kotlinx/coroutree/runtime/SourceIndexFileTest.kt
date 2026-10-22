@@ -9,8 +9,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * The source index as the Gradle plugin writes it, read by an agent that may be older or newer than the plugin:
- * records it does not know, or that are not what they should be, are skipped; the rest is taken as it is.
+ * The source index as the Gradle plugin writes it, read by an agent that can be older or newer than the plugin.
+ * The reader skips a record of an unknown kind or with the wrong number of fields and takes the rest as it is.
  */
 internal class SourceIndexFileTest {
     @Test
@@ -49,7 +49,7 @@ internal class SourceIndexFileTest {
             ),
             read(
                 dir,
-                "F\tcom.acme\tOrphan.kt\tsrc/Orphan.kt\n" + // a file before any module has nowhere to go
+                "F\tcom.acme\tOrphan.kt\tsrc/Orphan.kt\n" + // a file before the first module belongs to no module
                     "\n" +
                     "# a comment, should a newer plugin write one\n" +
                     "M\t:app\t/work/app\n" +
@@ -58,7 +58,7 @@ internal class SourceIndexFileTest {
                     "F\tcom.acme\tTooFew.kt\n" +
                     "F\tcom.acme\tTooMany.kt\tsrc/TooMany.kt\tand a field of a newer plugin\n" +
                     "F com.acme Spaces.kt src/Spaces.kt\n" +
-                    "M\t:broken\n" + // not a module: files after it stay with the last one that was
+                    "M\t:broken\n" + // not a module record, so the files after it belong to the module before it
                     "F\tcom.acme\tAfterTheBadModule.kt\tsrc/After.kt\n" +
                     "m\t:lower\t/work/lower\n"
             )

@@ -4,7 +4,7 @@ import kotlinx.coroutree.runtime.SourceMaps.Inlined
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
-/** Source maps as kotlinc 2.4 writes them (taken from the InlineFunctions sample), and the spellings of older compilers. */
+/** Source maps as kotlinc 2.4 writes them (taken from the InlineFunctions sample), and the forms that older compilers wrote. */
 internal class SourceMapsTest {
     @Test
     fun aFrameInInlinedCodeIsTheBodyAndTheCallSite() {
@@ -13,7 +13,7 @@ internal class SourceMapsTest {
             "SMAP\nMain.kt\nKotlin\n" + BODY + "*S KotlinDebug\n*F\n" + OWN + "*L\n14#1:36,3\n15#1:39\n18#1:52,10\n*E\n",
             mapOf(
                 37 to Inlined(arrayOf("retry"), intArrayOf(14)),
-                // Util.kt:117 of withLock, which retry (called at Main.kt:18) calls at Util.kt:24.
+                // Mutex.kt:118 of withLock, which retry calls at Util.kt:24 (line 37 of its copy). main calls retry at Main.kt:18.
                 53 to Inlined(arrayOf("withLock", "retry"), intArrayOf(37, 18))
             )
         )
@@ -46,7 +46,7 @@ internal class SourceMapsTest {
 
     @Test
     fun aLambdaInACopyOfAnInlineFunctionsClassIsOneFrameWhereItWasWritten() {
-        // The copy keeps the name of the file it was copied from; its own lines are another package's.
+        // The copy's map names the file it was copied from, and its own lines belong to a class of another package.
         SourceMaps.register(
             "com.acme.MainKt\$main$\$inlined\$later$1",
             "SMAP\nUtil.kt\nKotlin\n*S Kotlin\n*F\n+ 1 Util.kt\ncom/acme/util/UtilKt\$later$1\n" +

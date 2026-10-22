@@ -73,7 +73,7 @@ final class CoroutreeTransformer implements ClassFileTransformer {
         readSourceMap(node);
         if (project) changed |= CatchPatch.apply(node);
         if (!changed) return null;
-        // MethodPatch requires the original frames to avoid class loading during transformation.
+        // COMPUTE_FRAMES would load classes. The patches add no branches, so the original frames stay valid.
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         return writer.toByteArray();

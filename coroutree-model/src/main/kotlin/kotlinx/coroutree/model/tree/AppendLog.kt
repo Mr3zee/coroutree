@@ -1,7 +1,8 @@
 package kotlinx.coroutree.model.tree
 
 /**
- * Immutable prefix views take O(1) and remain valid after later appends.
+ * Append-only list with immutable prefix views. A view costs O(1) and stays valid after later appends,
+ * because elements never move: storage is a sequence of chunks of doubling size.
  * One thread appends. Other threads can read views after safe publication.
  */
 internal class AppendLog<T> {
@@ -30,6 +31,7 @@ internal class AppendLog<T> {
     private companion object {
         const val FIRST_CHUNK = 8
 
+        // Chunk k holds FIRST_CHUNK * 2^k elements and starts at FIRST_CHUNK * (2^k-1).
         fun chunkOf(index: Int): Int = 31 - Integer.numberOfLeadingZeros(index / FIRST_CHUNK + 1)
         fun startOf(chunk: Int): Int = FIRST_CHUNK * ((1 shl chunk) - 1)
     }

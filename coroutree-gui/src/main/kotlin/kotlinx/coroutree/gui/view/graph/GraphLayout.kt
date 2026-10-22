@@ -51,7 +51,7 @@ class LinkRoute(
     val bounds: Rect by lazy { Rect(points.minOf { it.x }, points.minOf { it.y }, points.maxOf { it.x }, points.maxOf { it.y }) }
 }
 
-/** The drawing invariant (DESIGN §6.2) applies to this settled layout. */
+/** A settled drawing of a [GraphModel]. The drawing invariant (DESIGN §6.2) applies to it. */
 class GraphLayout internal constructor(
     /** In the order of [GraphModel.nodes]. */
     val boxes: List<NodeBox>,

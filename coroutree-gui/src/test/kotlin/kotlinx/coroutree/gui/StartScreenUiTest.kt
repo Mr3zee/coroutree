@@ -8,7 +8,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.test.v2.runComposeUiTest
 import kotlinx.coroutree.gui.source.FeedStatus
 import kotlinx.coroutree.gui.source.SessionEntry
 import kotlinx.coroutree.gui.source.SessionInfo
@@ -69,7 +69,7 @@ class StartScreenUiTest {
         setContent {
             CoroutreeTheme(dark = false) {
                 TraceScreen(
-                    viewModel, "demo", status, failure = null, onOpenFrame = {}, onClose = { pressed += "sessions" },
+                    viewModel, "demo", status, failure = null, onOpenFrame = {}, onOpenNode = {}, onClose = { pressed += "sessions" },
                     onDisconnect = if (status == FeedStatus.LIVE) ({ pressed += "disconnect"; status = FeedStatus.DISCONNECTED }) else null,
                     onReconnect = if (status == FeedStatus.DISCONNECTED) ({ pressed += "reconnect" }) else null,
                 )

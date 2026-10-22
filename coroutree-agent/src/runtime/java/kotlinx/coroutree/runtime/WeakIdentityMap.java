@@ -14,6 +14,7 @@ final class WeakIdentityMap<K, V> {
     }
 
     boolean isEmpty() {
+        expunge();
         return map.isEmpty();
     }
 

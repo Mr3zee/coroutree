@@ -3,14 +3,15 @@ package kotlinx.coroutree.gradle
 import java.io.File
 
 /**
- * Scans only the source prefix before the package declaration. Stops at any token other than:
+ * Finds the `package` declaration of a Kotlin or Java source file without parsing it. The scan stops at the first
+ * token that can't precede the declaration, so its cost doesn't depend on the file size. It skips:
  *
  * - Whitespace.
- * - Comments, including nested Kotlin comments.
- * - File or package annotations.
+ * - Comments, nested Kotlin comments included.
+ * - File and package annotations, such as `@file:JvmName("…")` and those of `package-info.java`.
  */
 internal object PackageScanner {
-    /** A declaration beyond this character limit is reported as the root package. */
+    /** Enough for any license header. A declaration beyond it is reported as the root package. */
     private const val MAX_PREFIX = 64 * 1024
 
     fun packageOf(file: File): String {
@@ -27,9 +28,10 @@ internal object PackageScanner {
         return packageOf(String(buffer, 0, length), kotlin = !file.name.endsWith(".java"))
     }
 
-    fun packageOf(source: String, kotlin: Boolean = true): String = Scan(source, nestedComments = kotlin).packageName()
+    fun packageOf(source: String, kotlin: Boolean = true): String = Scan(source, kotlin).packageName()
 
-    private class Scan(private val text: String, private val nestedComments: Boolean) {
+    private class Scan(private val text: String, private val kotlin: Boolean) {
+        private val nestedComments = kotlin
         private var pos = 0
 
         fun packageName(): String {
@@ -50,11 +52,11 @@ internal object PackageScanner {
         private fun qualifiedName(): String {
             val name = StringBuilder()
             while (true) {
-                skipInlineBlank()
+                skipNameBlank()
                 val segment = identifier()
                 if (segment.isEmpty()) break
                 name.append(segment)
-                skipInlineBlank()
+                skipNameBlank()
                 if (pos < text.length && text[pos] == '.') {
                     name.append('.')
                     pos++
@@ -87,7 +89,9 @@ internal object PackageScanner {
             }
         }
 
-        /** Inside the declaration a line break ends a Kotlin package name, so only same-line blanks are skipped. */
+        /** A line break ends a Kotlin package name. A Java name goes on until its semicolon. */
+        private fun skipNameBlank() = if (kotlin) skipInlineBlank() else skipBlank()
+
         private fun skipInlineBlank() {
             while (pos < text.length) {
                 when {

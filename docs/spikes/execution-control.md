@@ -30,7 +30,7 @@ Parent links must exist before await so a new child inherits a paused subtree's 
 |---|---|
 | `createJobNode`, `discover`, `threadNode`, `poolOf` | Await before definition or discovery locks |
 | `continuationCreated` | Capture the stack first because the construct determines the parent link |
-| `continuationCompleted` | Use the jobless coroutine's execution unit |
+| `continuationCompleted` | Use the jobless coroutine's execution unit. Emits on the caller too, as `other` |
 | `coroutineResumed`, `coroutineSuspended` | Use the coroutine itself, regardless of the thread's unit stack |
 | `cancelRequested`, `parentCancelled`, `cancelling` | Resolve every target first |
 | `completing`, `completed` | Capture the unit before it is popped. Completion can emit on the caller too |

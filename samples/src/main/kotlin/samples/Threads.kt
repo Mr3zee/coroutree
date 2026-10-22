@@ -6,7 +6,7 @@ import kotlin.concurrent.thread
 
 /** Plain threads: start and join, sleep, wait/notify, park, an interrupt, a thread that starts a thread, an uncaught exception. */
 fun main() {
-    val lock = Object()
+    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN") val lock = Object() // Any has no wait() or notify()
     var ready = false
 
     val waiter = thread(name = "waiter") {

@@ -35,8 +35,29 @@ import kotlinx.coroutree.model.TraceHeader
 object DemoTrace {
     fun frames(): List<Frame> = Script().apply { play() }.frames
 
+    private fun header() = TraceHeader(
+        formatVersion = TraceHeader.FORMAT_VERSION,
+        agentVersion = "demo",
+        buildId = "20260917-201500-demo",
+        taskPath = ":shop:run",
+        jvm = JvmInfo(pid = 4242, javaVersion = "26.0.2", vmName = "OpenJDK 64-Bit Server VM", vmVersion = "26.0.2+1", command = "demo.shop.CheckoutKt --orders 3"),
+        sourceIndex = SourceIndex(
+            listOf(
+                SourceModule(
+                    path = ":shop", rootDir = "/demo/shop",
+                    files = listOf("Checkout.kt", "Inventory.kt", "Notifier.kt").map { SourceFile("demo.shop", it, "src/main/kotlin/demo/shop/$it") },
+                )
+            )
+        ),
+        includePackages = listOf("demo.shop"),
+        startedAtEpochMillis = 1_789_668_900_000,
+        projectDir = "/demo",
+        paceable = true,
+    )
+
     private class Script {
-        val frames = ArrayList<Frame>()
+        // The header first: the vocabulary below interns its stack frames into this list as it is built.
+        val frames = arrayListOf(Frame(header = header()))
         private val frameIds = HashMap<StackFrameDef, Int>()
         private var seq = 0L
         private var clock = 0L
@@ -138,27 +159,6 @@ object DemoTrace {
         // --- the story --------------------------------------------------------------------------------------------
 
         fun play() {
-            frames += Frame(
-                header = TraceHeader(
-                    formatVersion = TraceHeader.FORMAT_VERSION,
-                    agentVersion = "demo",
-                    buildId = "20260917-201500-demo",
-                    taskPath = ":shop:run",
-                    jvm = JvmInfo(pid = 4242, javaVersion = "26.0.2", vmName = "OpenJDK 64-Bit Server VM", vmVersion = "26.0.2+1", command = "demo.shop.CheckoutKt --orders 3"),
-                    sourceIndex = SourceIndex(
-                        listOf(
-                            SourceModule(
-                                path = ":shop", rootDir = "/demo/shop",
-                                files = listOf("Checkout.kt", "Inventory.kt", "Notifier.kt").map { SourceFile("demo.shop", it, "src/main/kotlin/demo/shop/$it") },
-                            )
-                        )
-                    ),
-                    includePackages = listOf("demo.shop"),
-                    startedAtEpochMillis = 1_789_668_900_000,
-                    projectDir = "/demo",
-                    paceable = true,
-                )
-            )
             pace(reason = PaceDef.Reason.CONFIG)
             frames += Frame(
                 diagnostic = Diagnostic(

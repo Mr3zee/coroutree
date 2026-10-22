@@ -21,9 +21,9 @@ import java.util.TreeSet
 import java.util.concurrent.CancellationException
 
 /**
- * The hook table is the agent's whole coupling to the internals of the JDK, of the Kotlin standard library and of
- * kotlinx.coroutines. Here it is held against the real things: the `Hooks` class it calls into, the JDK the
- * tests run on, and the kotlinx.coroutines the project is built with.
+ * The hook table is the agent's whole coupling to the internals of the JDK, the Kotlin standard library and
+ * kotlinx.coroutines. These tests check it against the `Hooks` class it calls, the JDK the tests run on, and the
+ * kotlinx.coroutines the project is built with.
  */
 internal class HookTableTest {
     private val table = HookTable()
@@ -31,7 +31,7 @@ internal class HookTableTest {
 
     private fun classes(jdk: Boolean): List<String> = table.classNames().filter { isJdk(it) == jdk }.sorted()
 
-    /** Every hook call the table can weave in, by reading the table itself: optional entries too, whatever this JDK has. */
+    /** Every hook call of the table, read by reflection from its patches. Optional entries are included, whatever this JDK has. */
     private fun hookCallsOfTheTable(): List<String> {
         val methods = ClassPatch::class.java.getDeclaredField("methods")
         val onEnter = MethodPatch::class.java.getDeclaredField("onEnter")
@@ -55,15 +55,14 @@ internal class HookTableTest {
         assertFalse(called.isEmpty())
         assertEquals(emptySet<String>(), called - hooks, "the table calls hooks that Hooks does not have: a NoSuchMethodError inside Thread.start or JobSupport")
 
-        // New hook = one entry in HookTable + one method in Hooks. The one hook that has no entry is the one CatchPatch
-        // puts into every catch block of the project's classes.
+        // `exceptionCaught` has no entry: CatchPatch inserts it into every catch block of the project's classes.
         assertEquals(setOf("exceptionCaught(Ljava/lang/Throwable;)V"), hooks - called)
     }
 
     @Test
     fun noClassOfTheJdkChangesShape() {
-        // They are retransformed, and a retransformed class can get neither a field nor a method. Only the job's tag
-        // changes a shape, and kotlinx.coroutines is patched while it is being loaded.
+        // JDK classes are retransformed, and a retransformed class can get neither a field nor a method. The tag of
+        // `JobSupport` is the one shape change, and kotlinx.coroutines is patched at load.
         val shaped = table.classNames().filter { table.get(it).changesShape() }
         assertEquals(listOf(HookTable.JOB_SUPPORT), shaped)
         assertFalse(classes(true).isEmpty())
@@ -85,8 +84,8 @@ internal class HookTableTest {
             for (method in node.methods) {
                 if (method.instructions.none { it is MethodInsnNode && it.owner == MethodPatch.HOOKS }) continue
                 hooked++
-                // These classes cannot be loaded a second time to let the JVM verify them. What the inserted code does
-                // to the operand stack and the local variables can still be checked, instruction by instruction.
+                // A JDK class can't be loaded a second time for the JVM to verify it. So ASM's verifier checks what the
+                // inserted code does to the operand stack and the local variables, instruction by instruction.
                 try {
                     Analyzer<BasicValue>(BasicVerifier()).analyze(node.name, method)
                 } catch (e: AnalyzerException) {
@@ -98,8 +97,8 @@ internal class HookTableTest {
     }
 
     /**
-     * The Kotlin standard library and kotlinx.coroutines as the agent would leave them: every class of the table is
-     * rewritten on its way into a class loader of its own, and the JVM verifies it there against its old frames.
+     * A class loader that rewrites every class of the table from the Kotlin standard library and kotlinx.coroutines
+     * as it loads it. The JVM then verifies the rewritten class against its old frames.
      */
     private inner class RewrittenLibraries : ClassLoader(APP) {
         val rewritten = HashSet<String>()
@@ -125,13 +124,13 @@ internal class HookTableTest {
         val libraries = RewrittenLibraries()
         for (name in classes(false)) {
             assertEquals(emptyList<Any>(), table.get(name).apply(read(Lab.bytesOf(APP, name))), "required methods missing in $name")
-            // Linked and initialised: a class whose inserted code or hand-written frame the verifier rejects fails here.
+            // Linked and initialized: a class whose inserted code or hand-written frame the verifier rejects fails here.
             val loaded = Class.forName(name.replace('/', '.'), true, libraries)
             assertTrue(loaded.classLoader === libraries && name in libraries.rewritten, name)
         }
 
-        // And they still work. A job of the rewritten library: created, cancelled and completed through the hooked
-        // methods (tracing is off, the hooks return at their first check), carrying the tag the runtime hangs its node on.
+        // The rewritten library still works: a job is created, cancelled and completed through the hooked methods, and
+        // it has the tag that holds the runtime's node. Tracing is off, so the hooks return at their first check.
         val jobType = libraries.loadClass("kotlinx.coroutines.Job")
         val jobFactory = libraries.loadClass("kotlinx.coroutines.JobKt").getMethod("Job", jobType)
         val job = jobFactory.invoke(null, null)

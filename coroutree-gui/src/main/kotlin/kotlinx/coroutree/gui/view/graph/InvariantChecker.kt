@@ -7,21 +7,20 @@ class Drawing(val boxes: List<DrawnBox>, val lines: List<DrawnLine>)
 
 class DrawnBox(val id: Long, val rect: Rect)
 
-/**
- * One parent's structural edges count as one line because they can share a trunk.
- */
+/** One line of the drawing: an edge, or the structural edges of one parent, which share a trunk. */
 class DrawnLine(val name: String, val segments: List<Segment>, val ends: List<LineEnd>, val label: Rect?)
 
 /** Where a line meets a box it belongs to. */
 class LineEnd(val point: Point, val boxId: Long)
 
-/** [rule] matches DESIGN §6.2, or is 0 for a malformed drawing. */
+/** [rule] is the rule's number in DESIGN §6.2, or 0 for a malformed drawing. */
 data class Violation(val rule: Int, val message: String) {
     override fun toString(): String = "rule $rule: $message"
 }
 
 /**
- * Checks shapes independently of the layout engine against the drawing invariant of DESIGN §6.2:
+ * Checks a settled drawing against the drawing invariant of DESIGN §6.2. It judges shapes only and uses nothing of
+ * how the engine works:
  *
  * 1. No two boxes are closer than [minBoxGap].
  * 2. No two lines are closer than [minLineGap] anywhere, unless they cross.
@@ -209,6 +208,7 @@ class InvariantChecker(
             component[find(a)] = find(b)
         }
 
+        /** Calls [action] one time for each two shapes whose bounds are at most [reach] apart. */
         private fun forEachNearPair(shapes: List<Shape>, action: (Shape, Shape) -> Unit) {
             if (shapes.isEmpty()) return
             val grown = shapes.map { it.bounds.inflated((reach + 1) / 2) }

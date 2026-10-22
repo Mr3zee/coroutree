@@ -1,6 +1,6 @@
 package kotlinx.coroutree.gui
 
-import kotlinx.coroutree.gui.source.FlatJson
+import kotlinx.coroutree.gui.source.Json
 import kotlinx.coroutree.gui.source.SessionInfo
 import kotlinx.coroutree.gui.source.SessionRegistry
 import java.io.File
@@ -28,10 +28,10 @@ class SessionsTest {
 
     @Test
     fun flatJsonHandlesEscapesAndRejectsNesting() {
-        assertEquals(mapOf("a" to "x\nyA", "b" to -12L, "c" to 1.5, "d" to null, "e" to true), FlatJson.parse(""" { "a" : "x\nyA", "b": -12, "c": 1.5, "d": null, "e": true } """))
-        assertEquals(emptyMap(), FlatJson.parse("{}"))
-        assertFailsWith<FlatJson.ParseException> { FlatJson.parse("""{"a":{"b":1}}""") }
-        assertFailsWith<FlatJson.ParseException> { FlatJson.parse("""{"a":1""") }
+        assertEquals(mapOf("a" to "x\nyA", "b" to -12L, "c" to 1.5, "d" to null, "e" to true), Json.parse(""" { "a" : "x\nyA", "b": -12, "c": 1.5, "d": null, "e": true } """))
+        assertEquals(emptyMap(), Json.parse("{}"))
+        assertEquals(mapOf("a" to mapOf("b" to 1L)), Json.parse("""{"a":{"b":1}}"""))
+        assertFailsWith<Json.ParseException> { Json.parse("""{"a":1""") }
     }
 
     @Test

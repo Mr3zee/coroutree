@@ -166,7 +166,8 @@ class LayoutEngineRulesTest {
         val margin = GraphMetrics.MARGIN
         for ((what, graph) in shapesForBounds()) {
             val layout = LayoutEngine.layout(graph)
-            val all = (layout.boxes.map { it.rect } + layout.routes.map { it.bounds } + layout.trunks.map { it.bounds }).reduce(Rect::union)
+            // A label is part of the drawing (see the next test), so it counts for the extent too.
+            val all = (layout.boxes.map { it.rect } + layout.routes.map { it.bounds } + layout.routes.mapNotNull { it.label } + layout.trunks.map { it.bounds }).reduce(Rect::union)
             assertEquals(0 to 0, layout.bounds.left to layout.bounds.top, what)
             assertEquals(margin, all.top, "$what: the first layer stands at the margin")
             assertTrue(all.left in margin until margin + column, "$what: the leftmost shape is at the margin, within the column grid: ${all.left}")

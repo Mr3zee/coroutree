@@ -21,10 +21,10 @@ import org.objectweb.asm.tree.MethodInsnNode
 import org.objectweb.asm.tree.TableSwitchInsnNode
 
 /**
- * Hook calls woven into a class the way the hook table weaves them into the JDK and kotlinx.coroutines: rewritten by
- * the transformer's own path (frames expanded, none recomputed), then loaded by a JVM that verifies it and run next
- * to the class as it was compiled. The rewritten class calls the hooks it was told to, when it was told to, and does
- * everything else exactly as before.
+ * Hook calls inserted into a class the way the hook table inserts them into the JDK and kotlinx.coroutines. The
+ * transformer's own path rewrites the class (frames expanded, none recomputed), the JVM verifies it, and each test
+ * runs it next to the class as compiled. The rewritten class calls the hooks of its patches at the points they name
+ * and does everything else as before.
  */
 internal class PatchTest {
     private val transformer = Lab.transformer("")
@@ -34,7 +34,7 @@ internal class PatchTest {
         HookLog.take()
     }
 
-    /** The subject with one method patched, loaded and verified. */
+    /** The subject with `patches` applied, loaded and verified. */
     private fun patched(vararg patches: MethodPatch): Class<*> {
         val patch = ClassPatch(SUBJECT)
         for (method in patches) patch.method(method)
@@ -64,7 +64,7 @@ internal class PatchTest {
             throw failure
         })
         assertSame(failure, outcome.thrown)
-        // No enter hook (VirtualThread.run has none); the exit hook gets `this`, the one thing the handler's frame knows.
+        // No enter hook, as for `VirtualThread.run`. The exit hook gets `this`, the one local in the catch-all handler's frame.
         val calls = HookLog.take()
         assertEquals(3, calls.size)
         assertEquals("running vt", calls[0][0])
@@ -118,14 +118,14 @@ internal class PatchTest {
         assertSame(subject, calls[0][1])
         assertEquals("job", calls[0][2])
 
-        // The constructor that delegates to the hooked one: one object, one call.
+        // The constructor that delegates to the hooked one reports one object in one call.
         val byDefault = patched.getConstructor().newInstance()
         calls = HookLog.take()
         assertEquals(1, calls.size)
         assertSame(byDefault, calls[0][1])
         assertEquals("default", calls[0][2])
 
-        // A constructor that throws creates nothing.
+        // A constructor that throws reports no object.
         assertThrows<ReflectiveOperationException> { instance(patched, null) }
         assertEquals(emptyList<String>(), HookLog.taken())
     }
@@ -176,7 +176,7 @@ internal class PatchTest {
     @Test
     fun theValueAboutToBeReturnedCanOnlyBeHandedOverWhenItIsOneSlotWide() {
         val hook = HookCall("continuationCreated", "($OBJECT)V", Args.returnValue())
-        // A long or a double cannot be duplicated the way one slot is; the patch says so when it is applied, not at run time.
+        // A long or a double can't be duplicated the way one slot is. The patch throws when it is applied, not at run time.
         assertThrows<IllegalStateException> { patched(MethodPatch.exit("wide", "()J", hook)) }
         assertThrows<IllegalStateException> { patched(MethodPatch.exit("ratio", "()D", hook)) }
         assertThrows<IllegalStateException>("nothing is returned") { patched(MethodPatch.exit("quiet", "($OBJECT)V", hook)) }
@@ -198,7 +198,7 @@ internal class PatchTest {
         Lab.call(subject, "resumeWith", "a")
         assertEquals(listOf("continuationCompleted($sink, s:a, $subject)", "accepted(s:a)", "resumed()"), HookLog.taken())
 
-        // Every call the method makes to it, wherever in the method.
+        // The hook goes in front of every call the method makes to `accept`, wherever in the method.
         Lab.call(subject, "resumeWith", 42)
         assertEquals(
             listOf(
@@ -222,7 +222,7 @@ internal class PatchTest {
             .method(MethodPatch.enter("later", "($OBJECT)V", hook)) // abstract in this version of the class
             .method(MethodPatch.enter("elsewhere", "($OBJECT)V", hook)) // native
             .method(MethodPatch.enter("elsewhere", "($OBJECT)V", hook).optional())
-            .method(MethodPatch.enter("overloaded", "(I)Ljava/lang/String;", hook)) // the name is there, the signature is not
+            .method(MethodPatch.enter("overloaded", "(I)Ljava/lang/String;", hook)) // the name is there, the signature isn't
             .method(MethodPatch.enter("overloaded", "(Ljava/lang/String;)Ljava/lang/String;", hook))
             .apply(shapes)
         assertEquals(
@@ -230,7 +230,7 @@ internal class PatchTest {
             missing
         )
 
-        // A method that does not make the call a hook was to go in front of is as good as a method that is not there.
+        // A method that doesn't make the call the hook goes in front of counts as missing.
         val subject = ClassNode()
         ClassReader(Lab.bytesOf(Subject::class.java)).accept(subject, ClassReader.EXPAND_FRAMES)
         val operands = HookCall("continuationCompleted", "($OBJECT$OBJECT$OBJECT)V", Args.callOperands(), Args.self())
@@ -260,7 +260,7 @@ internal class PatchTest {
         assertFalse(ClassPatch(SUBJECT).method(MethodPatch.around("read", "([B)I", BLOCK_ENTER, BLOCK_EXIT)).changesShape())
 
         val once = transformer.rewrite(javaClass.classLoader, SUBJECT, patch, false, Lab.bytesOf(Subject::class.java))
-        // A class that comes by the transformer a second time (another agent in front of this one retransforms it) is tagged once.
+        // A class that the transformer rewrites a second time (another agent retransforms it) is tagged once.
         val twice = transformer.rewrite(javaClass.classLoader, SUBJECT, patch, false, once)
         val tagged = Lab.Loader().with(Subject::class.java, twice).verified(Subject::class.java)
 
@@ -280,8 +280,8 @@ internal class PatchTest {
 
     @Test
     fun insertedCodeIsStraightLine() {
-        // No branch means no new stack map frame inside existing code, which is what lets classes be rewritten without
-        // recomputing frames (and so without loading classes inside a transformer). Jumps before and after: the same.
+        // A branch needs a new stack map frame, and recomputing frames loads classes inside the transformer. So the
+        // rewritten class has the same number of jumps as the original.
         val patch = ClassPatch(SUBJECT).tagged()
             .method(MethodPatch.around("sleep", "(JLjava/lang/String;)J", BLOCK_ENTER, BLOCK_EXIT))
             .method(MethodPatch.around("run", "(Ljava/lang/Runnable;)V", null, HookCall("continuationCreated", "($OBJECT)V", Args.self())))
@@ -312,7 +312,7 @@ internal class PatchTest {
 
         private fun instance(type: Class<*>, name: String?): Any = type.getConstructor(String::class.java).newInstance(name)
 
-        /** The same call on the class as compiled and on the patched one: same outcome; returns what the hooks saw of the second. */
+        /** Checks that `method` gives the same outcome on `original` and on `patched`. Returns the hook calls of the second, as text. */
         private fun sameOutcome(original: Any, patched: Any, method: String, vararg arguments: Any?): List<String> {
             val expected = Lab.call(original, method, *arguments)
             HookLog.take()

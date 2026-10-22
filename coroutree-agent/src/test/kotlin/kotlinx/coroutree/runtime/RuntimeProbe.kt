@@ -1,8 +1,8 @@
 package kotlinx.coroutree.runtime
 
-/** What tests outside this package may ask of the runtime's package-private parts. */
+/** The runtime's package-private parts, for tests outside this package. */
 object RuntimeProbe {
-    /** [StackCapture.capture] from where it is called, as `Class.method`. */
+    /** [StackCapture.capture] from the caller, each frame as `Class.method`. */
     @JvmStatic
     fun capture(limit: Int): List<String> = StackCapture.capture(limit).map { "${it.className}.${it.methodName}" }
 

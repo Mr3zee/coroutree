@@ -4,31 +4,31 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 /**
- * What the class of a job says about the node it becomes (DESIGN §2.1), read off the class hierarchy of the
- * kotlinx.coroutines the project is built with: these are the library's internal classes, by the names the agent
- * knows them under.
+ * The kind and the behavior of the node that a job becomes, by the job's class (DESIGN §2.1), read from the class
+ * hierarchy of the kotlinx.coroutines that the project is built with. The classes are the library's internal ones,
+ * under the names that `ClassInfo` matches.
  */
 internal class ClassInfoTest {
     @Test
     fun theClassOfAJobSaysWhatKindOfNodeItIsAndHowItBehaves() {
         val expected = listOf(
-            // What runs code of its own, concurrently with its parent.
+            // Runs code of its own, concurrently with its parent.
             "kotlinx.coroutines.StandaloneCoroutine" to "COROUTINE launch",
             "kotlinx.coroutines.LazyStandaloneCoroutine" to "COROUTINE launch",
             "kotlinx.coroutines.DeferredCoroutine" to "COROUTINE async, holds its exception",
             "kotlinx.coroutines.LazyDeferredCoroutine" to "COROUTINE async, holds its exception",
             "kotlinx.coroutines.BlockingCoroutine" to "COROUTINE runBlocking, blocks its thread",
-            // What runs in its caller's place, on its caller's thread until it suspends, and throws its failure at the caller.
+            // Runs in its caller's place, on the caller's thread until it suspends, and rethrows its failure to the caller.
             "kotlinx.coroutines.internal.ScopeCoroutine" to "SCOPE coroutineScope, throws at its caller, starts undispatched",
             "kotlinx.coroutines.SupervisorCoroutine" to "SCOPE supervisorScope, throws at its caller, starts undispatched",
             "kotlinx.coroutines.TimeoutCoroutine" to "SCOPE withTimeout, throws at its caller, starts undispatched",
-            // withContext: to another dispatcher it is dispatched, like any coroutine; otherwise it starts in place.
+            // withContext to another dispatcher is dispatched like any coroutine. Otherwise it starts in place.
             "kotlinx.coroutines.DispatchedCoroutine" to "CONTEXT_CHANGE withContext, throws at its caller",
             "kotlinx.coroutines.UndispatchedCoroutine" to "CONTEXT_CHANGE withContext, throws at its caller, starts undispatched",
-            // A plain Job: nothing runs in it, it only holds children.
+            // A plain Job runs nothing. It only holds children.
             "kotlinx.coroutines.JobImpl" to "SCOPE Job()",
             "kotlinx.coroutines.SupervisorJobImpl" to "SCOPE SupervisorJob()",
-            // A job of a class whose constructor is not hooked: found when something happens to it, named after its class.
+            // A class whose constructor isn't hooked: the node is found when something happens to it and named after the class.
             "kotlinx.coroutines.CompletableDeferredImpl" to "SCOPE CompletableDeferredImpl, construction not seen",
         )
         for ((className, description) in expected) assertEquals(description, info(className), className)

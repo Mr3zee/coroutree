@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutree.gui.demo.DemoTrace
 import kotlinx.coroutree.gui.ide.IdeOpener
+import kotlinx.coroutree.gui.ide.RunningIde
 import kotlinx.coroutree.gui.source.FeedStatus
 import kotlinx.coroutree.gui.source.SessionInfo
 import kotlinx.coroutree.gui.source.SessionRegistry
@@ -25,6 +26,7 @@ import kotlinx.coroutree.model.SourceModule
 import kotlinx.coroutree.model.StackFrameDef
 import kotlinx.coroutree.model.TraceHeader
 import kotlinx.coroutree.model.tree.TraceSnapshot
+import kotlinx.coroutree.model.tree.title
 import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -72,7 +74,7 @@ class AppStateTest {
         advanceTimeBy(4_000)
         assertEquals("first", app.message)
         app.show("second")
-        advanceTimeBy(4_000) // the first note's time is up; it must not take the second one with it
+        advanceTimeBy(4_000) // the first note's time is up. It must not take the second one with it
         runCurrent()
         assertEquals("second", app.message)
         advanceTimeBy(1_001)
@@ -117,7 +119,7 @@ class AppStateTest {
         }
     }
 
-    /** "Disconnect": the JVM is left alone, the trace stays; "Reconnect": the same JVM again, the same view. */
+    /** Disconnect leaves the JVM alone and the trace on screen. Reconnect attaches to the same JVM with the same view. */
     @Test
     fun disconnectingKeepsTheTraceOnScreenAndReconnectingKeepsTheView() {
         val connections = LinkedBlockingQueue<String>()
@@ -167,27 +169,31 @@ class AppStateTest {
     }
 
     @Test
-    fun aFrameOpensInTheIdeIfItIsProjectCodeAndSaysSoIfItIsNot() {
+    fun aFrameOpensAtItsLineIfItIsProjectCodeAndByClassNameIfItIsNot() {
         val source = File(temp, "app/src/Main.kt").apply { parentFile.mkdirs(); writeText("fun main() {}") }
-        val marker = File(temp, "opened.txt")
-        val app = AppState(scope, IdeOpener("/bin/sh -c 'echo \"$1:$2\" > \"$0\"' ${marker.path} {path} {line}"), SessionRegistry(temp))
+        val commands = mutableListOf<List<String>>()
+        val idea = RunningIde("IntelliJ IDEA", "2026.3", File(temp, "idea"), listOf(temp))
+        val app = AppState(scope, IdeOpener(runningIdes = { listOf(idea) }, run = { commands += it; IdeOpener.Run(0, "") }), SessionRegistry(temp))
         val projectFrame = StackFrameDef(1, "demo.MainKt", "main", "Main.kt", 3)
-        val libraryFrame = StackFrameDef(2, "kotlinx.coroutines.BuildersKt", "launch", "Builders.kt", 1)
+        val lambdaFrame = StackFrameDef(2, "kotlinx.coroutines.BuildersKt${'$'}launch${'$'}1", "invokeSuspend", "Builders.kt", 1)
 
         app.openInIde(projectFrame)
-        assertEquals("demo.MainKt is not part of the project sources", app.message, "no trace is open: nothing is known about sources")
+        assertNull(app.message, "no trace is open: nothing to go to")
+        assertEquals(emptyList(), commands)
 
         app.open(TraceSource.Demo(live = false))
         val index = SourceIndex(listOf(SourceModule(":app", File(temp, "app").path, listOf(SourceFile("demo", "Main.kt", "src/Main.kt"), SourceFile("demo", "Gone.kt", "src/Gone.kt")))))
-        app.current!!.viewModel.snapshot = snapshotOf(listOf(Frame(header = TraceHeader(sourceIndex = index))))
+        app.current!!.viewModel.snapshot = snapshotOf(listOf(Frame(header = TraceHeader(sourceIndex = index, projectDir = temp.path))))
 
-        app.openInIde(libraryFrame)
-        assertEquals("kotlinx.coroutines.BuildersKt is not part of the project sources", app.message)
+        app.openInIde(projectFrame)
+        assertEquals("Opened src/Main.kt:3 in IntelliJ IDEA 2026.3", app.awaitNote())
+        assertEquals(listOf(idea.launcher.path, "--line", "3", source.path), commands.single())
 
         app.show("")
-        app.openInIde(projectFrame)
-        assertEquals("Opened src/Main.kt:3 in the IDE", app.awaitNote())
-        assertEquals("${source.path}:3", marker.readText().trim())
+        commands.clear()
+        app.openInIde(lambdaFrame)
+        assertEquals("Opened kotlinx.coroutines.BuildersKt in IntelliJ IDEA 2026.3", app.awaitNote(), "the top-level class of the lambda")
+        assertEquals(listOf(idea.launcher.path, "jetbrains://idea/navigate/reference?project=${temp.name}&fqn=kotlinx.coroutines.BuildersKt"), commands.single())
 
         // In the index, but not on this machine (a trace recorded elsewhere).
         app.show("")
@@ -195,5 +201,23 @@ class AppStateTest {
         val missing = app.awaitNote()
         assertTrue("No such file" in missing && "Gone.kt" in missing, missing)
         assertNotNull(app.current, "the trace stays open whatever the IDE says")
+    }
+
+    @Test
+    fun aNodeOpensAtItsSiteAndOneWithoutASiteSaysSo() {
+        val commands = mutableListOf<List<String>>()
+        val app = AppState(scope, IdeOpener(runningIdes = { emptyList() }, run = { commands += it; IdeOpener.Run(0, "") }), SessionRegistry(temp))
+        app.open(TraceSource.Demo(live = false))
+        val snapshot = demoSnapshot()
+        app.current!!.viewModel.snapshot = snapshot
+
+        app.openNodeInIde(snapshot.named("payment").id)
+        assertEquals(IdeOpener.NO_IDE, app.awaitNote(), "no IDE runs: the note says so instead of nothing happening")
+
+        app.show("")
+        val siteless = snapshot.nodes.values.first { it.info.siteFrame == 0 }
+        app.openNodeInIde(siteless.id)
+        assertEquals("${siteless.title} has no source location in the trace", app.message)
+        assertEquals(emptyList(), commands)
     }
 }

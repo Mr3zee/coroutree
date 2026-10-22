@@ -15,7 +15,7 @@ plugins {
  * Both are Java. Kotlin is for the tests only: the Kotlin plugin adds no stdlib to `main` and `runtime`
  * (kotlin.stdlib.default.dependency=false in gradle.properties), so nothing of Kotlin can reach the agent jar.
  */
-val runtime: SourceSet by sourceSets.creating
+val runtime = sourceSets.create("runtime")
 
 java {
     toolchain {
@@ -40,7 +40,7 @@ tasks.named<JavaCompile>(runtime.compileJavaTaskName) {
     options.compilerArgs.add("-XDstringConcat=inline")
 }
 
-val shade: Configuration by configurations.creating {
+val shade = configurations.create("shade") {
     isCanBeConsumed = false
 }
 
@@ -71,7 +71,7 @@ tasks.test {
     systemProperty("coroutree.debug", "true")
 }
 
-val generateBuildInfo by tasks.registering {
+val generateBuildInfo = tasks.register("generateBuildInfo") {
     val version = project.version.toString()
     val outputDir = layout.buildDirectory.dir("generated/buildInfo")
     inputs.property("version", version)
@@ -94,7 +94,7 @@ val generateBuildInfo by tasks.registering {
 }
 runtime.java.srcDir(generateBuildInfo)
 
-val runtimeJar by tasks.registering(Jar::class) {
+val runtimeJar = tasks.register<Jar>("runtimeJar") {
     from(runtime.output)
     archiveBaseName = "coroutree-runtime"
     archiveVersion = ""
@@ -122,7 +122,7 @@ val nativePlatform: String? = when {
 }
 val cCompiler: File? = System.getenv("PATH").orEmpty().split(File.pathSeparator).map { File(it, "cc") }.firstOrNull { it.canExecute() }
 
-val compileMonitorProbe by tasks.registering(Exec::class) {
+val compileMonitorProbe = tasks.register<Exec>("compileMonitorProbe") {
     val source = layout.projectDirectory.file("src/native/coroutree_monitor.c")
     val jdkHome = javaToolchains.compilerFor(java.toolchain).map { it.metadata.installationPath.asFile }
     val outputDir = layout.buildDirectory.dir("native")

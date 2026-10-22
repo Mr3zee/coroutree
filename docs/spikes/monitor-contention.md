@@ -48,6 +48,6 @@ The model and GUI need no backend-specific behavior.
 - The plugin extracts the bundled probe and passes `-agentpath:`. Manual attachment falls back to `System.load`, which warns on JDK 24 and later.
 - Without a usable binary, the agent reports a diagnostic and continues without monitor-contention events.
 
-The [platform gaps](../DESIGN.md#future-work-without-a-milestone) describe native release coverage.
+The [platform gaps](../DESIGN.md#known-gaps) describe native release coverage.
 This spike didn't test higher contention rates, many monitors, Windows or Linux, or a library downloaded through Maven on macOS.
 GraalVM native images are out of scope because coroutree requires a JVM.

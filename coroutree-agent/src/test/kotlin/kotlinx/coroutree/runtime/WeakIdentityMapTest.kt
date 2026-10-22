@@ -13,12 +13,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Where the runtime keeps its nodes for application objects that cannot carry a tag (threads, pools, continuations):
- * by identity, never by the application's equals and hashCode, and without keeping the object alive.
+ * Where the runtime stores its nodes for application objects that can't carry a tag (threads, pools, continuations):
+ * by identity, never by the application's equals and hashCode, and with no strong reference to the object.
  */
 @Timeout(60)
 internal class WeakIdentityMapTest {
-    /** Equal to everything of its kind, and counting how often the application's code was asked. */
+    /** Equal to every instance of its class, and counts how often its equals and hashCode run. */
     private class AllEqual {
         override fun equals(other: Any?): Boolean {
             ASKED.incrementAndGet()
@@ -73,15 +73,15 @@ internal class WeakIdentityMapTest {
             values.add(WeakReference(value))
         }
         awaitCleared(keys, map, "the map kept its keys alive")
-        // Entries of collected keys are swept out when the map is next written to; a node must not outlive its thread for good.
+        // The next write removes the entries of collected keys, so a node isn't held forever after its thread is gone.
         awaitCleared(values, map, "the map kept the values of collected keys")
         assertEquals("kept", map.get(kept))
     }
 
     @Test
     fun aMapWhoseKeysAreAllGoneIsEmptyWithoutAnybodyWritingToIt() {
-        // isEmpty: "whether nothing was ever put, or all of it is gone". It is what lets a lookup on a hot path cost
-        // nothing, so it has to become true by itself: a program that started one jobless coroutine long ago puts no more.
+        // Hooks skips a lookup when isEmpty is true, so it has to become true without a write. A program that
+        // started one jobless coroutine long ago puts nothing more.
         val map = WeakIdentityMap<Any, Any>()
         val keys = ArrayList<WeakReference<Any>>()
         repeat(10) {
@@ -96,7 +96,7 @@ internal class WeakIdentityMapTest {
             Thread.sleep(10)
         }
         for (key in keys) assertNull(key.get(), "the keys were not collected: the test cannot tell")
-        // The references are enqueued a moment after they are cleared; give the map that moment, and no write.
+        // The JVM enqueues a reference a moment after it clears it. The loop gives the map that moment, without a write.
         var i = 0
         while (i < 200 && !map.isEmpty()) {
             Thread.sleep(10)
@@ -118,7 +118,7 @@ internal class WeakIdentityMapTest {
             Thread {
                 go.await()
                 for (i in 0 until keys) {
-                    // What Hooks does for a thread it has not seen: make a node, put it, take whichever got there first.
+                    // What Hooks does for a thread it hasn't seen: make a node, put it, use whichever node was put first.
                     val raced = map.putIfAbsent(shared[i], mine)
                     if (raced == null) winners.incrementAndGet()
                     val settled = raced ?: mine

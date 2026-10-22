@@ -113,7 +113,7 @@ class TraceStoreTest {
         val store = TraceStore()
         listOf(
             Frame(stackFrame = StackFrameDef(id = 1, className = "demo.MainKt", methodName = "main", fileName = "Main.kt", line = 7)),
-            launched(1, 0, NodeKind.COROUTINE, "runBlocking").let { it.copy(event = it.event!!.copy(node = it.event!!.node!!.copy(siteFrame = 1))) },
+            launched(1, 0, NodeKind.COROUTINE, "runBlocking").let { it.copy(event = it.event!!.copy(node = it.event.node!!.copy(siteFrame = 1))) },
             launched(2, 1, NodeKind.CONTEXT_CHANGE, "withContext"),
             event(2, EventKind.DISPATCHER_CHANGED) {
                 copy(contextDiff = listOf(ContextChange(ContextElementKind.DISPATCHER, "Dispatcher", "BlockingEventLoop", "Dispatchers.IO")))

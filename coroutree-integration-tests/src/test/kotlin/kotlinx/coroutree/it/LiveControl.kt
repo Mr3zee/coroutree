@@ -18,7 +18,7 @@ import kotlin.test.fail
  */
 class LiveClient(port: Int, token: String) : Closeable {
     private val socket = Socket(InetAddress.getLoopbackAddress(), port)
-    private val lock = Object()
+    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN") private val lock = Object() // Any has no wait() or notifyAll()
     private val received = ArrayList<Frame>()
     private var ended = false
 

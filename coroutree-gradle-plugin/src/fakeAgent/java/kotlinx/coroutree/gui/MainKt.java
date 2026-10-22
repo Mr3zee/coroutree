@@ -12,7 +12,7 @@ import java.util.List;
  * Stands in for the GUI, under the name of its main class: the same jar is the fake agent and, on the
  * {@code coroutreeGui} configuration, what {@code coroutreeView} launches. Each start appends its arguments,
  * one per line between {@code launched} and {@code end}, to {@code launched.txt} in the directory given by {@code --dir},
- * or else in the working directory (which is where {@code coroutreeView} starts it: the build's data directory).
+ * else in the working directory. {@code coroutreeView} starts it without {@code --dir}, in the build's data directory.
  */
 public final class MainKt {
     private MainKt() {

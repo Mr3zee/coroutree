@@ -25,9 +25,9 @@ import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * The live socket (TRACE_FORMAT, "Live stream"): a client gets the trace file byte for byte from its first byte and
- * then as it grows, whenever it joins and however it reads; and with a gate in the JVM it may send commands, which
- * makes it a controller whose leaving must not leave the program stopped.
+ * The live socket (TRACE_FORMAT, "Live stream"). A client gets the trace file byte for byte from its first byte and
+ * then as it grows, whenever it joins and however it reads. With a gate in the JVM a client can send commands, which
+ * makes it a controller, and a controller that leaves must not leave the program stopped.
  */
 @Timeout(60)
 internal class LiveServerTest {
@@ -56,7 +56,7 @@ internal class LiveServerTest {
         session.write(false)
         descriptor = File(sessions, "${ProcessHandle.current().pid()}.json")
         Tracer.paceSink = defs
-        Tracer.active = true // a controller's leaving reverts the gate only while tracing is on
+        Tracer.active = true // the gate reverts on a controller's leaving only while tracing is on
     }
 
     @AfterEach
@@ -65,7 +65,7 @@ internal class LiveServerTest {
         if (writer.isAlive) writer.shutdown()
         server.shutdown()
         awaitThreads("coroutree-live-control", 0)
-        // Whatever a failed test left of the JVM's gate: as configured, for the tests that come after.
+        // A failed test can leave the JVM's one gate paused or at another pace. The tests after it need it as configured.
         val gate = Pace.GATE
         if (gate.root.paused) gate.command("resume")
         if (gate.root.intervalNanos != TracedJvm.INTERVAL_NANOS) gate.command("pace ${TracedJvm.INTERVAL_NANOS}")
@@ -96,7 +96,7 @@ internal class LiveServerTest {
         return defs[index]
     }
 
-    /** Keeps what was read, to compare with the file. */
+    /** Records what was read, to compare with the file. */
     private class Recorded(input: InputStream) : FilterInputStream(input) {
         val bytes = ByteArrayOutputStream()
 
@@ -186,11 +186,11 @@ internal class LiveServerTest {
             val first = try {
                 connect(token).getInputStream().read()
             } catch (reset: IOException) {
-                -1 // closed with what the client sent still unread: a reset is as closed as it gets
+                -1 // the server closes with the client's bytes still unread, which the client gets as a reset, not as end of stream
             }
             assertEquals(-1, first, "token of ${token.length} characters")
         }
-        // And none of it was in the way of a client that knows the token.
+        // None of it blocks a client with the right token.
         assertNotNull(TraceReader(connect().getInputStream()).next()!!.header)
     }
 
@@ -222,7 +222,7 @@ internal class LiveServerTest {
         val reader = TraceReader(received)
         assertNotNull(reader.next()!!.header)
 
-        // Far more than the buffers of a socket take: the thread that serves the stalled client is stuck in its write.
+        // Far more than a socket's buffers hold (16 MB): the thread that serves the stalled client blocks in its write.
         val chunk = "x".repeat(64 * 1024)
         val chunks = 256
         repeat(chunks) { writer.enqueue(DiagnosticDef(Wire.INFO, chunk)) }
@@ -235,7 +235,7 @@ internal class LiveServerTest {
         assertArrayEquals(Files.readAllBytes(traceFile.toPath()), received.bytes.toByteArray())
         awaitThreads("coroutree-live-client", 1) // the one that serves the stalled client, still in its write
 
-        server.shutdown() // gives it its moment, then cuts it off
+        server.shutdown() // waits up to 3 s for it, then closes its socket
         awaitThreads("coroutree-live-client", 0)
     }
 
@@ -244,7 +244,7 @@ internal class LiveServerTest {
     @Test
     fun commandsOfAClientSetTheGateAndItsLeavingPutsEverythingBackAsConfigured() {
         val socket = connect()
-        send(socket, "pace 7000000\r") // either line end
+        send(socket, "pace 7000000\r") // CR LF is a line end too
         val pace = awaitDef(0)
         assertEquals(Wire.PACE_CONTROLLER, pace.reason)
         assertEquals(7_000_000, pace.intervalNanos)
@@ -272,7 +272,7 @@ internal class LiveServerTest {
         send(socket, "hello")
         send(socket, "")
         send(socket, "pause now please")
-        // More than a command can be long. Cut to its first 256 characters or to its tail it would read "pause".
+        // Longer than any command (256 characters). Cut to its head or to its tail, it reads "pause".
         send(socket, "pause" + " ".repeat(300) + "pause")
         send(socket, " ".repeat(300) + "pause")
         send(socket, "pause ".repeat(10_000))
@@ -289,13 +289,13 @@ internal class LiveServerTest {
         val socket = connect()
         send(socket, "pause")
         awaitDef(0)
-        // No line feed in sight: the reader gives up on the client, which is thereby a controller that left.
+        // No line feed in 120 000 bytes: the server closes the connection at 65 536, so the controller has left.
         val endless = "pause ".repeat(20_000).toByteArray(Charsets.US_ASCII)
         try {
             socket.getOutputStream().write(endless)
             socket.getOutputStream().flush()
         } catch (closedAlready: IOException) {
-            // which is the point
+            // expected: the server closed the connection first
         }
         val failOpen = awaitDef(1)
         assertEquals(Wire.PACE_FAIL_OPEN, failOpen.reason)
@@ -313,7 +313,7 @@ internal class LiveServerTest {
         assertTrue(awaitDef(0).paused)
         send(watcher, "what is going on")
 
-        watcher.close() // it only watched: its leaving is nothing
+        watcher.close() // sent no command, so it isn't a controller
         awaitThreads("coroutree-live-control", 2)
         assertTrue(Pace.GATE.root.paused)
 
@@ -340,7 +340,7 @@ internal class LiveServerTest {
 
     companion object {
         init {
-            // The JVM's one gate, as PaceTest makes it, whichever of the two is loaded first.
+            // Pace.GATE is made once per JVM, so the config must be PaceTest's, whichever class loads first.
             if (Tracer.config == null) Tracer.config = AgentConfig.parse(TracedJvm.GATE_OPTIONS)
         }
 
@@ -363,7 +363,7 @@ internal class LiveServerTest {
             await("$count threads named $name") { threads(name) == count }
         }
 
-        /** The value of a string field of the descriptor, unescaped the way any JSON reader would. */
+        /** The value of a string field of the descriptor, with its JSON escapes removed. */
         private fun jsonString(json: String, field: String): String {
             val at = json.indexOf("\"$field\":\"")
             if (at < 0) throw AssertionError("no string field $field in $json")

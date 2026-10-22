@@ -22,9 +22,14 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.LockSupport
 
 /**
- * The gate by itself, without an instrumented program around it: what holds whom for how long, what a step takes and
- * gives back, what a command does, and what the hold leaves untouched in the thread it holds. Lower bounds on time
- * are exact (that is the promise); upper bounds are generous (that is the machine).
+ * The gate by itself, without an instrumented program around it:
+ * - what holds which thread, and for how long
+ * - what a step takes and gives back
+ * - what a command does
+ * - what the hold leaves untouched in the thread it holds
+ *
+ * Lower bounds on time are exact, because a pace is a minimum interval. Upper bounds are generous, because they
+ * depend on the machine.
  */
 @Timeout(60)
 internal class PaceTest {
@@ -39,7 +44,7 @@ internal class PaceTest {
 
     @AfterEach
     fun tearDown() {
-        Tracer.active = false // fail open: whoever a failed test left at a gate goes
+        Tracer.active = false // fail open: the threads a failed test left at a gate are released
         for (thread in threads) thread.join(10_000)
         Tracer.paceSink = null
         val ts = ThreadState.current()
@@ -69,7 +74,7 @@ internal class PaceTest {
         return thread
     }
 
-    /** A thread that makes one step and says when it is through. */
+    /** A thread that makes one step and counts `through` down after it. */
     private inner class Stepper(gate: Pace, unit: PaceNode, node: PaceNode, emits: Boolean) {
         val through = CountDownLatch(1)
         val held = AtomicLong(-1)
@@ -121,7 +126,7 @@ internal class PaceTest {
         val gate = gate(0, false)
         val node = known(gate, null)
         assertTrue(gate.isOpen())
-        gate.command("pace 0 ${node.id}") // a setting that holds nobody is a setting still: it shields the subtree from the global one
+        gate.command("pace 0 ${node.id}") // a setting that holds nobody is a setting still: the subtree no longer follows the global one
         assertFalse(gate.isOpen())
         gate.command("inherit ${node.id}")
         assertTrue(gate.isOpen())
@@ -205,7 +210,7 @@ internal class PaceTest {
         assertTrue(done.await(30, TimeUnit.SECONDS))
         val elapsed = System.nanoTime() - started
         assertTrue(elapsed >= (steps - 1) * interval, "each sequence takes its time")
-        // Serialised, it would be sequences × steps × interval = 1.6 s.
+        // Serialized, the sequences take sequences × steps × interval = 1.6 s.
         assertTrue(elapsed < sequences * (steps - 1) * interval / 2, "eight sequences took ${elapsed / MS} ms: they waited for each other")
     }
 
@@ -229,7 +234,7 @@ internal class PaceTest {
         val gate = gate(interval, false)
         val parent = Node()
         var previous = step(gate, parent)
-        repeat(3) { // a loop that launches three children: each is news to a new node, by the same flow
+        repeat(3) { // a loop that launches three children: each is an event on a new node, from the same flow
             val release = step(gate, parent, Node(), null, true)
             assertTrue(release - previous >= interval)
             previous = release
@@ -256,7 +261,7 @@ internal class PaceTest {
         val caller = Node()
         val lastChild = Node()
         val callerStep = step(gate, caller)
-        // The scope ends on the thread of its last child and hands its failure to the caller: an event on the caller.
+        // The scope ends on the thread of its last child and rethrows its failure to the caller: an event on the caller.
         val completed = step(gate, lastChild, scope, caller, true)
         assertTrue(completed - callerStep >= interval)
         assertEquals(completed, caller.lastStep.get())
@@ -278,7 +283,7 @@ internal class PaceTest {
             start("contender-$worker") {
                 for (s in 0 until stepsEach) {
                     val target = (worker + s) % shared.size
-                    val emits = s % 7 != 3 // some steps turn out to have nothing to report and give their place back
+                    val emits = s % 7 != 3 // some steps have nothing to report and give their place back
                     val release = step(gate, flows[worker], shared[target], null, emits)
                     if (emits) log.add(longArrayOf(release, worker.toLong(), target.toLong()))
                 }
@@ -334,7 +339,7 @@ internal class PaceTest {
         val scope = JobNode(IDS.incrementAndGet(), true, false)
         scope.caller = caller
         val first = step(gate, caller)
-        val second = step(gate, scope) // another node, the same line of execution
+        val second = step(gate, scope) // another node, the same flow
         assertTrue(second - first >= interval)
         assertEquals(second, caller.lastStep.get())
     }
@@ -364,7 +369,7 @@ internal class PaceTest {
         val ts = ThreadState.current()
         gate.pass(ts, node, node, null)
         val later = ts.claimTime + 1000
-        node.lastStep.set(later) // another thread took the next place off this claim
+        node.lastStep.set(later) // another thread claimed the next place after this one
         Pace.settle(ts)
         assertEquals(later, node.lastStep.get())
     }
@@ -433,7 +438,7 @@ internal class PaceTest {
     fun aStepWithNothingToReportGivesItsPermitBack() {
         val gate = gate(0, true)
         gate.command("step 1")
-        step(gate, Node(), Node(), null, false) // a probe that had nothing to say
+        step(gate, Node(), Node(), null, false) // a probe that had nothing to report
         val next = Stepper(gate, Node(), Node(), true)
         next.assertThrough()
         Stepper(gate, Node(), Node(), true).assertHeldFor(100)
@@ -448,7 +453,7 @@ internal class PaceTest {
         gate.pass(ts, node, node, null)
         assertEquals(1, ts.claimedPermits)
         gate.command("pause") // the user changed their mind while the hook was at work
-        Pace.settle(ts) // … and the hook has nothing to report
+        Pace.settle(ts) // and the hook reports nothing
         assertEquals(0, gate.root.permits.get())
         Stepper(gate, Node(), Node(), true).assertHeldFor(100)
     }
@@ -504,7 +509,7 @@ internal class PaceTest {
         gate.command("step 2")
         val before = System.nanoTime()
         step(gate, node)
-        step(gate, node) // the user asked for it: it does not wait ten seconds
+        step(gate, node) // the user asked for the step: it doesn't wait ten seconds
         assertTrue(System.nanoTime() - before < 2000 * MS)
     }
 
@@ -575,8 +580,8 @@ internal class PaceTest {
         val inside = known(gate, pausedRoot)
         val outside = known(gate, null)
         gate.command("pause ${pausedRoot.id}")
-        val into = Stepper(gate, outside, inside, true) // an outsider cancels a coroutine in there: held at that event
-        val outOf = Stepper(gate, inside, outside, true) // and nothing reaches out of it
+        val into = Stepper(gate, outside, inside, true) // a node outside cancels a coroutine inside: held at that event
+        val outOf = Stepper(gate, inside, outside, true) // and an event from inside on a node outside is held too
         into.assertHeldFor(100)
         outOf.assertHeldFor(10)
         gate.command("step 2 ${pausedRoot.id}")
@@ -655,7 +660,7 @@ internal class PaceTest {
 
     @Test
     fun theEndOfANodeLiftsItsSetting() {
-        val node = Node() // registered with the JVM's gate: nodeFinished is what a hook calls
+        val node = Node() // registered with the JVM's gate, because nodeFinished uses Pace.GATE as a hook does
         Pace.GATE.command("pause ${node.id}")
         assertNotNull(node.scope)
         val below = Stepper(Pace.GATE, Node(node), Node(node), true)
@@ -799,7 +804,7 @@ internal class PaceTest {
         gate.command("pace 0")
         gate.command("resume")
         assertTrue(gate.isOpen(), "what the commands say and what the gate does are the same thing")
-        // The trace agrees: the last word about every scope is what the scope is.
+        // The trace matches: the last definition of every scope is the scope's state.
         val lastOfNode = defs.lastOrNull { it.scopeNodeId == node.id }
         assertNotNull(lastOfNode)
         assertTrue(lastOfNode!!.dropped)
@@ -905,7 +910,7 @@ internal class PaceTest {
     @Test
     fun aThreadOfTheJvmItselfIsNeverHeld() {
         // The Signal Dispatcher starts the "SIGTERM handler" thread, in the root thread group like itself. Held at a
-        // paused gate inside that Thread.start, it would never deliver the signal.
+        // paused gate inside that Thread.start, it never delivers the signal.
         var root = Thread.currentThread().threadGroup
         while (root.parent != null) root = root.parent
         val gate = gate(0, true)
@@ -915,7 +920,7 @@ internal class PaceTest {
             marked.set(ThreadState.current().neverHeld)
             val node = Node()
             step(gate, node)
-            if (node.lastStep.get() == Pace.NEVER) through.countDown() // and it takes no place in anybody's sequence
+            if (node.lastStep.get() == Pace.NEVER) through.countDown() // and it takes no place in any sequence
         }, "like the Signal Dispatcher")
         system.isDaemon = true
         threads.add(system)
@@ -968,7 +973,7 @@ internal class PaceTest {
         }
         awaitState(held, Thread.State.TIMED_WAITING)
         held.interrupt()
-        repeat(20) { // and again, and again
+        repeat(20) {
             Thread.sleep(25)
             held.interrupt()
         }
@@ -999,8 +1004,8 @@ internal class PaceTest {
     }
 
     /**
-     * The reason the gate sleeps and does not park: a thread is unparked, then held inside the hook of its own
-     * park(), then parks. With the permit gone it would never wake up.
+     * The reason the gate sleeps and doesn't park: a thread is unparked, then held inside the hook of its own
+     * `park()`, then parks. If the hold used the permit, the thread never wakes up.
      */
     private fun parkPermitSurvives(builder: Thread.Builder) {
         val gate = gate(60 * MS, false)
@@ -1101,7 +1106,7 @@ internal class PaceTest {
     fun theHoldThrowsNothingWhateverItIsGiven() {
         val gate = gate(1, false)
         val ts = ThreadState.current()
-        gate.pass(ts, null, Node(), null) // no unit: the node stands in
+        gate.pass(ts, null, Node(), null) // no unit: the node is the unit
         Pace.settle(ts)
         gate.pass(ts, null, null, null) // a hook's bug must not become the program's exception
         Pace.settle(ts)
@@ -1123,10 +1128,10 @@ internal class PaceTest {
         assertNull(gate.node(id))
         assertTrue(gate.command("pause $id"))
         assertTrue(gate.isOpen())
-        known(gate, null) // registering is when the collected are swept out; nothing to assert but that it does not throw
+        known(gate, null) // registering is when collected references are removed, and the only assertion is that it doesn't throw
     }
 
-    /** Not inlined: the node must not survive in a local of the caller's frame. */
+    /** A method of its own, so the node doesn't survive in a local of the caller's frame. */
     private fun idOfANodeNobodyHolds(gate: Pace): Long = known(gate, null).id
 
     @Test
@@ -1177,7 +1182,7 @@ internal class PaceTest {
 
     companion object {
         init {
-            // The gate of a JVM is made from its configuration the first time Pace is touched; nodes keep time only in a JVM that has one.
+            // The gate of a JVM is made from `Tracer.config` when Pace loads, and nodes have a `lastStep` only in a JVM that has one.
             Tracer.config = AgentConfig.parse("live=false,pace.events.per.second=1000")
         }
 
@@ -1192,7 +1197,7 @@ internal class PaceTest {
 
         private fun gate(intervalNanos: Long, paused: Boolean) = Pace(intervalNanos, paused, true)
 
-        /** A node the gate knows by id, the way every node of a traced program is known to the real one. */
+        /** A node registered with the gate by id, as every node of a traced program is with the real one. */
         private fun known(gate: Pace, parent: PaceNode?): Node {
             val node = Node(parent)
             gate.register(node)
@@ -1204,7 +1209,7 @@ internal class PaceTest {
             val ts = ThreadState.current()
             gate.pass(ts, unit, node, other)
             val release = ts.releaseNanos
-            if (emits) ts.stepEmitted = true // what Tracer.emit notes
+            if (emits) ts.stepEmitted = true // what Tracer.emit sets
             Pace.settle(ts)
             return release
         }

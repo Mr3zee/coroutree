@@ -1,0 +1,20 @@
+#!/bin/sh
+# Builds the coroutree GUI jar and starts it on this machine's JDK (17 or later), with no project behind it.
+# The GUI lists the JVMs that run under the agent and the recent runs (~/.coroutree/sessions).
+# Arguments go to the GUI: --trace <file.ctrace>, --session <file.json>, --ide <command>, --demo[=live].
+#
+# The jar is rebuilt on each start, so a change to the GUI sources is picked up. Gradle makes that a no-op
+# when nothing changed. COROUTREE_GUI_NO_BUILD=1 skips the build and runs the jar as it is.
+set -e
+root=$(cd "$(dirname "$0")/.." && pwd)
+jar="$root/coroutree-gui/build/coroutree-gui.jar"
+if [ -z "$COROUTREE_GUI_NO_BUILD" ] || [ ! -f "$jar" ]; then
+    echo "coroutree: building $jar" >&2
+    "$root/gradlew" -q -p "$root" :coroutree-gui:uberJar
+fi
+java=java
+[ -n "$JAVA_HOME" ] && java="$JAVA_HOME/bin/java"
+case "$(uname)" in
+    Darwin) dock=-Xdock:name=coroutree ;;
+esac
+exec "$java" ${dock:+"$dock"} -jar "$jar" "$@"

@@ -43,7 +43,7 @@ import java.nio.file.Path
 
 /**
  * The trace format has two implementations that share nothing: the agent's encoder, written by hand, and the model.
- * Here the first writes and the second reads, field for field; docs/TRACE_FORMAT.md is what both are held to.
+ * Here the first writes and the second reads, field for field. docs/TRACE_FORMAT.md is the contract of both.
  */
 internal class WireCompatibilityTest {
     private val bytes = ByteArrayOutputStream()
@@ -224,8 +224,8 @@ internal class WireCompatibilityTest {
     // ------------------------------------------------------------------ numbers
 
     /**
-     * Every number the agent can write means, to the model, what its name says. The names differ by a prefix only
-     * (proto enums share a namespace, the Java constants share a class).
+     * Every enum number the agent writes is the model's value of the same name. The names differ by a prefix only,
+     * because proto enums share a namespace and the Java constants share a class.
      */
     @Test
     fun everyEnumNumberOfTheAgentIsTheModelsValueOfTheSameName() {
@@ -289,8 +289,8 @@ internal class WireCompatibilityTest {
             seen.merge(actual.declaringJavaClass, 1, Int::plus)
         }
 
-        // And the other way round: nothing the model can read is beyond the agent's vocabulary. NodeState is the
-        // exception the format spells out: the agent writes final states only, the others are a reader's fold.
+        // And the other way round: the agent has a number for every value the model can read. NodeState is the
+        // exception that the format states: the agent writes final states only, and a reader folds the others.
         val expected = HashMap<Class<*>, Int>()
         for (type in listOf(
             EventKind::class.java, NodeKind::class.java, Origin::class.java, BlockReason::class.java, HandledBy::class.java,
@@ -326,7 +326,7 @@ internal class WireCompatibilityTest {
 
     @Test
     fun anEmptyMessageIsStillThere() {
-        // Presence is information: an exception nobody could describe is an exception; a thread with nothing set is a thread.
+        // Presence is information: an exception without a description is still an exception, and a thread with nothing set is still a thread.
         val event = TraceEvent(1, Wire.EXCEPTION_THROWN, 1)
         event.seq = 1
         event.exception = ExceptionDef()
@@ -360,7 +360,7 @@ internal class WireCompatibilityTest {
         val event = TraceEvent(Long.MAX_VALUE, Wire.EXCEPTION_THROWN, Long.MAX_VALUE)
         event.seq = Long.MAX_VALUE
         event.timeNanos = Long.MAX_VALUE
-        event.heldNanos = -1 // never written by the agent, but an int64 is an int64
+        event.heldNanos = -1 // the agent never writes a negative value, but the field is an int64
         event.exception = ExceptionDef()
         event.exception.message = huge
         event.exception.identity = Int.MIN_VALUE
@@ -397,7 +397,7 @@ internal class WireCompatibilityTest {
         first.stack = arrayOf(REPO, MAIN)
         encoder.writeEvent(first)
 
-        // Equal by value, another instance; and the three places a frame can be referred to from.
+        // Equal by value, another instance, and the three parts of an event that can refer to a frame.
         val second = TraceEvent(2, Wire.LAUNCHED, 1)
         second.seq = 2
         second.stack = arrayOf(StackFrameRef("com.acme.MainKt", "main", "Main.kt", 12), INLINE)
@@ -405,9 +405,9 @@ internal class WireCompatibilityTest {
         second.node.siteFrame = StackFrameRef("com.acme.Repo", "load", "Repo.java", 77)
         second.exception = ExceptionDef()
         second.exception.stack = arrayOf(
-            // The same line of the same method as INLINE, but the method's own code, not an inline function's body in it.
+            // The same method and line as INLINE, but the method's own code, not an inline body.
             StackFrameRef("com.acme.util.UtilKt", "retry", "Util.kt", 30, false),
-            // Everything as MAIN but the file: a class of the same name from another source.
+            // The same as MAIN but the file: a class of the same name from another source file.
             StackFrameRef("com.acme.MainKt", "main", "Other.kt", 12),
         )
         encoder.writeEvent(second)
@@ -437,7 +437,7 @@ internal class WireCompatibilityTest {
 
     @Test
     fun aFrameOfNativeOrUnknownCodeHasLineZeroAndNoFile() {
-        // 0 is "unknown" for line numbers; the JVM says -2 for native methods and -1 for no line information.
+        // The JVM gives -2 for a native method and -1 for no line information. The format writes 0 for an unknown line.
         val event = TraceEvent(1, Wire.THREAD_BLOCKED, 1)
         event.seq = 1
         event.stack = StackFrameRef.of(

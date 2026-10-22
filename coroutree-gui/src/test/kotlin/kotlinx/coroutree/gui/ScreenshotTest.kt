@@ -3,7 +3,7 @@ package kotlinx.coroutree.gui
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.ExperimentalTestApi
-import androidx.compose.ui.test.runDesktopComposeUiTest
+import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import kotlinx.coroutree.gui.source.FeedStatus
 import kotlinx.coroutree.gui.source.SessionEntry
 import kotlinx.coroutree.gui.source.SessionInfo
@@ -41,7 +41,7 @@ class ScreenshotTest {
 
     @Composable
     private fun Screen(viewModel: TraceViewModel, dark: Boolean, status: FeedStatus) {
-        CoroutreeTheme(dark) { TraceScreen(viewModel, "demo", status, failure = null, onOpenFrame = {}, onClose = {}) }
+        CoroutreeTheme(dark) { TraceScreen(viewModel, "demo", status, failure = null, onOpenFrame = {}, onOpenNode = {}, onClose = {}) }
     }
 
     @Test

@@ -6,7 +6,7 @@ enum class EdgeKind {
     CANCELS,
     INTERRUPTS,
 
-    /** Only the selected coroutine's current thread link is drawn. */
+    /** Coroutine to its current thread. Every running coroutine has one, so only the selection's is drawn. */
     RUNS_ON,
 }
 
@@ -81,7 +81,7 @@ object GraphMetrics {
     /** Between a label and the nearest vertical line, its own bends included. */
     const val LABEL_CLEARANCE = 4
 
-    /** Labels below this width are omitted. */
+    /** An edge whose label slot is narrower than this gets no label. */
     const val MIN_LABEL_WIDTH = 28
 
     /** Empty space around the drawing. */

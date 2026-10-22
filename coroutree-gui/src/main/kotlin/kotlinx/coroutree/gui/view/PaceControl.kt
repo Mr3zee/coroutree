@@ -7,8 +7,9 @@ import kotlin.math.ln
 import kotlin.math.roundToLong
 
 /**
- * Node 0 selects the whole program. A nonzero id selects a structural subtree (DESIGN §3.1).
- * Commands have no direct reply. The GUI must show settings confirmed by the trace stream.
+ * An execution-control command (DESIGN §3.1), one text line on the live socket.
+ * Node 0 selects the whole program. A nonzero id selects that node's structural subtree.
+ * A command has no reply. Its effect comes back in the trace, and the GUI shows that, never what it sent.
  */
 sealed interface PaceCommand {
     val node: Long
@@ -46,7 +47,7 @@ object SpeedScale {
     const val SLOWEST_INTERVAL_NANOS = 10_000_000_000L
     const val FASTEST_INTERVAL_NANOS = 1_000_000L
 
-    /** Reserves the slider's final region for the unlimited setting. */
+    /** Positions from here on mean unlimited. The room makes the setting easy to hit. */
     const val UNLIMITED_FROM = 0.97f
 
     fun intervalAt(position: Float): Long {
@@ -61,7 +62,7 @@ object SpeedScale {
         if (intervalNanos <= 0) return 1f
         val clamped = intervalNanos.coerceIn(FASTEST_INTERVAL_NANOS, SLOWEST_INTERVAL_NANOS).toDouble()
         val t = (ln(SLOWEST_INTERVAL_NANOS.toDouble()) - ln(clamped)) / (ln(SLOWEST_INTERVAL_NANOS.toDouble()) - ln(FASTEST_INTERVAL_NANOS.toDouble()))
-        // Finite intervals must remain below the unlimited region.
+        // A finite interval stays below the unlimited region, whatever its length.
         return (t * UNLIMITED_FROM).toFloat().coerceAtMost(UNLIMITED_FROM - 0.0005f)
     }
 
@@ -73,7 +74,8 @@ object SpeedScale {
 }
 
 /**
- * Interleaves execution-control changes after [PaceDef.afterSeq]. Shares the event list to avoid a copy of potentially millions of events.
+ * The items of the event log: the events, with each execution-control change after the event [PaceDef.afterSeq].
+ * A trace can have millions of events and few changes, so nothing is copied: an index maps through the changes only.
  */
 class EventLogItems(val events: List<Event>, paceChanges: List<PaceDef>) {
     sealed interface Item {
@@ -85,7 +87,7 @@ class EventLogItems(val events: List<Event>, paceChanges: List<PaceDef>) {
     private val positions: IntArray = IntArray(paceChanges.size).also { positions ->
         var previous = -1
         for ((i, change) in paceChanges.withIndex()) {
-            // Stream order determines change order. afterSeq only positions changes among events.
+            // Changes keep their stream order even where afterSeq doesn't ascend. afterSeq only places a change among the events.
             val position = maxOf(eventsUpTo(change.afterSeq) + i, previous + 1)
             positions[i] = position
             previous = position

@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Timeout
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
-/** What the runtime keeps per thread: who is in a hook, and which execution unit's blocking calls are being counted. */
+/** The runtime's state of one thread: whether it is in a hook, and the execution unit whose blocking calls are counted. */
 @Timeout(60)
 internal class ThreadStateTest {
     @Test
@@ -32,7 +32,7 @@ internal class ThreadStateTest {
         }, state)
         assertTrue(agent.inHook, "the observer is not part of the picture: every hook returns at its guard")
 
-        // The JVM's pseudo-thread that waits for the program to end and runs the shutdown sequence: not the program either.
+        // The JVM's own thread, which waits for the program to end and runs the shutdown sequence: not the program either.
         val destroyer = fresh(Thread({ state.set(ThreadState.current()) }, "DestroyJavaVM"), state)
         assertTrue(destroyer.inHook)
     }
@@ -58,7 +58,7 @@ internal class ThreadStateTest {
         ts.blockEmittedAt = 1
         ts.blockOtherNodeId = outer.id
         ts.pushUnit(inner)
-        ts.pushUnit(inner) // the resume probe fires for every frame of the call chain
+        ts.pushUnit(inner) // the resume probe runs for every frame of the call chain
         assertSame(inner, ts.currentUnit())
         assertEquals(0, ts.blockDepth)
         assertEquals(0, ts.blockOtherNodeId)
@@ -94,7 +94,7 @@ internal class ThreadStateTest {
         ts.blockDepth = 7
         ts.pushUnit(top)
 
-        ts.popUnit(middle) // it suspended; what it had started undispatched is off this thread with it
+        ts.popUnit(middle) // it suspended, so the units it started undispatched leave this thread with it
         assertSame(bottom, ts.currentUnit())
         assertEquals(5, ts.blockDepth, "the books are bottom's again, as they were when middle came")
         ts.popUnit(bottom)
@@ -125,7 +125,7 @@ internal class ThreadStateTest {
 
         private fun unit() = JobNode(IDS.incrementAndGet(), false, false)
 
-        /** The state of a thread of its own, so that no test sees what another left. */
+        /** The state of a new thread, so no test sees what another left. */
         private fun fresh(thread: Thread, state: AtomicReference<ThreadState>): ThreadState {
             thread.start()
             thread.join()

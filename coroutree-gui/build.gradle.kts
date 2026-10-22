@@ -120,6 +120,37 @@ val uberJars = desktopTargets.map { target ->
     }
 }
 
+// This machine's jar under a fixed name, which bin/coroutree-gui runs: the GUI with no Gradle and no project behind it.
+tasks.register<Copy>("uberJar") {
+    group = "build"
+    description = "Self-contained GUI jar for this machine: build/coroutree-gui.jar"
+    val host = desktopTargets.indexOf(hostTarget)
+    if (host < 0) doFirst { throw GradleException("No GUI build for $hostTarget") } else from(uberJars[host])
+    into(layout.buildDirectory)
+    rename { "coroutree-gui.jar" }
+}
+
+// Builds that jar and starts the GUI on the JVM that runs Gradle. The build ends at once; the GUI stays, its output in
+// build/coroutree-gui.log. The same as bin/coroutree-gui, for an IDE's Gradle tool window.
+tasks.register("launch") {
+    group = "application"
+    description = "Builds build/coroutree-gui.jar and starts the standalone GUI in the background."
+    dependsOn("uberJar")
+    outputs.upToDateWhen { false }
+    val jar = layout.buildDirectory.file("coroutree-gui.jar")
+    val log = layout.buildDirectory.file("coroutree-gui.log")
+    val onMac = System.getProperty("os.name").lowercase().contains("mac")
+    doLast {
+        val java = File(System.getProperty("java.home"), "bin/java").path
+        val command = listOfNotNull(java, "-Xdock:name=coroutree".takeIf { onMac }, "-jar", jar.get().asFile.path)
+        ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.appendTo(log.get().asFile))
+            .start()
+        logger.lifecycle("coroutree GUI started. Its output goes to ${log.get().asFile}")
+    }
+}
+
 publishing {
     publications {
         create<MavenPublication>("gui") {

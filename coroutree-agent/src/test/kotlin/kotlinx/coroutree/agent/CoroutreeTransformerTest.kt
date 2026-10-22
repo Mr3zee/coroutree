@@ -19,8 +19,8 @@ import java.io.InputStream
 import java.io.PrintStream
 
 /**
- * What the transformer does with a class the JVM hands it: nothing (null) unless the class is in the hook table or is
- * the project's and has something to instrument; and never an exception into class loading, whatever the bytes are.
+ * The transformer returns null for a class that is neither in the hook table nor a project class with something to
+ * instrument. It never throws into class loading, whatever the bytes are.
  */
 internal class CoroutreeTransformerTest {
     private val transformer = Lab.transformer("include=com.acme")
@@ -29,12 +29,12 @@ internal class CoroutreeTransformerTest {
     fun aClassThatIsNeitherInTheTableNorTheProjectsIsLeftAlone() {
         assertNull(transformer.transform(APP, "org/lib/Thing", null, null, Lab.bytesOf(Subject::class.java)))
         assertNull(transformer.transform(APP, null, null, null, Lab.bytesOf(Subject::class.java)), "a class without a name: a hidden class, a lambda")
-        // Project classes come from an application class loader; the bootstrap loader never holds them.
+        // The bootstrap loader (null) holds no project classes.
         assertNull(transformer.transform(null, Lab.internalName(Catching::class.java), null, null, Lab.bytesOf(Catching::class.java)))
-        // A project class with nothing to instrument is not rewritten for the sake of it.
+        // A project class without a catch block has nothing to instrument.
         assertNull(transformer.transform(APP, Lab.internalName(App::class.java), null, null, Lab.bytesOf(App::class.java)))
         assertNotNull(transformer.transform(APP, Lab.internalName(Catching::class.java), null, null, Lab.bytesOf(Catching::class.java)))
-        // Without project packages nothing is the project's: "everything" is not something to instrument.
+        // Without `include`, no class is a project class for the transformer, because the project would otherwise be every class there is.
         assertNull(Lab.transformer("").transform(APP, Lab.internalName(Catching::class.java), null, null, Lab.bytesOf(Catching::class.java)))
         assertNull(Lab.transformer("include=com.acme,exclude=com.acme.app").transform(APP, Lab.internalName(Catching::class.java), null, null, Lab.bytesOf(Catching::class.java)))
     }
@@ -51,7 +51,7 @@ internal class CoroutreeTransformerTest {
         )
         for (bytes in broken) {
             val said = stderrOf {
-                // The project's, a library's, and one from the hook table.
+                // A project class, a library class and a class of the hook table.
                 assertNull(transformer.transform(APP, Lab.internalName(Catching::class.java), null, null, bytes))
                 assertNull(transformer.transform(APP, "org/lib/Thing", null, null, bytes))
                 assertNull(transformer.transform(null, "java/lang/Thread", Thread::class.java, null, bytes))
@@ -63,7 +63,7 @@ internal class CoroutreeTransformerTest {
 
     @Test
     fun aJdkClassOfTheTableIsRewrittenWhenRetransformedAndAClassThatWouldChangeShapeIsNot() {
-        // The JDK's classes were loaded long before the agent; they are retransformed, which allows no new field.
+        // JDK classes are loaded before the agent and retransformed, and a retransformation can't add a field.
         val thread = Lab.bytesOf(null, "java/lang/Thread")
         assertNotNull(transformer.transform(null, "java/lang/Thread", Thread::class.java, null, thread))
         assertNotNull(transformer.transform(null, "java/lang/Thread", null, null, thread))
@@ -77,19 +77,19 @@ internal class CoroutreeTransformerTest {
 
     @Test
     fun theSourceMapOfEveryApplicationClassIsRememberedEvenIfTheClassIsNotChanged() {
-        // Any class may be in a stack, and a Kotlin one with inlined code in it.
+        // Any class can be in a captured stack with inlined code in it, so the source map of an unchanged class is read too.
         assertNull(transformer.transform(APP, "org/lib/a/Lib", null, null, classFile("org/lib/a/Lib", smap("org/lib/a/Lib"), 0)))
         assertEquals(2, framesAt36("org.lib.a.Lib"))
         assertNull(transformer.transform(APP, "com/acme/a/Project", null, null, classFile("com/acme/a/Project", smap("com/acme/a/Project"), 0)))
         assertEquals(2, framesAt36("com.acme.a.Project"))
 
-        // Not for the JDK's and the agent's own classes: they hold no inlined Kotlin, and are loaded by the thousand.
+        // Not for a bootstrap class, a JDK class or an agent class: they hold no inlined Kotlin, and the JVM loads thousands of them.
         assertNull(transformer.transform(null, "org/lib/a/Boot", null, null, classFile("org/lib/a/Boot", smap("org/lib/a/Boot"), 0)))
         assertEquals(1, framesAt36("org.lib.a.Boot"))
         assertNull(transformer.transform(APP, "java/fake/Jdk", null, null, classFile("java/fake/Jdk", smap("java/fake/Jdk"), 0)))
         assertEquals(1, framesAt36("java.fake.Jdk"))
 
-        // A class without a source map, or with something else in its place, says nothing and breaks nothing.
+        // A class without a source map, or with other text in its place, adds no frame and throws nothing.
         assertNull(transformer.transform(APP, "org/lib/a/Plain", null, null, classFile("org/lib/a/Plain", null, 0)))
         assertNull(transformer.transform(APP, "org/lib/a/Odd", null, null, classFile("org/lib/a/Odd", "SMAP\nMain.kt\nKotlin\n*S Kotlin\n*F\n+ x y\n*L\nq#w:e\n", 0)))
         assertEquals(1, framesAt36("org.lib.a.Plain"))
@@ -98,7 +98,8 @@ internal class CoroutreeTransformerTest {
 
     @Test
     fun theMainBehindSuspendFunMainIsOnTheLineOfTheDeclaration() {
-        // The compiler's main(String[]), where the coroutine is created, has no line numbers at all.
+        // The `main(String[])` that the compiler generates for `suspend fun main` creates the coroutine and has no line
+        // numbers. Its frame gets the first line of the suspending `main`.
         transformer.transform(APP, "org/lib/b/ServerKt", null, null, classFile("org/lib/b/ServerKt", null, 16))
         transformer.transform(APP, "com/acme/b/ServerKt", null, null, classFile("com/acme/b/ServerKt", null, 21))
         assertEquals(listOf("org.lib.b.ServerKt.main(Server.kt:16)"), RuntimeProbe.logicalFrames("org.lib.b.ServerKt", "main", "Server.kt", -1))
@@ -138,7 +139,7 @@ internal class CoroutreeTransformerTest {
 
     @Test
     fun aLibraryWhoseInternalsAreNotWhatTheTableExpectsIsReportedLoudlyNotSilentlyMistraced() {
-        // A kotlinx.coroutines of some other time: JobSupport is there, the methods the hooks go into are not.
+        // A `JobSupport` of some other version: the class exists, the methods the hooks go into don't.
         val other = ClassWriter(0)
         other.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, JOB_SUPPORT, null, "java/lang/Object", null)
         val constructor = other.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null)
@@ -158,7 +159,7 @@ internal class CoroutreeTransformerTest {
         for (method in listOf("cancel", "parentCancelled", "notifyCancelling", "makeCompletingOnce", "completeStateFinalization")) {
             assertTrue(method in said, "every missing method is named, $method: $said")
         }
-        // What can be done is done: the class still loads, and its jobs can still carry a node.
+        // The class still loads, and it still has the tag that holds a job's node.
         val loaded = Lab.Loader().with("kotlinx.coroutines.JobSupport", rewritten).verified("kotlinx.coroutines.JobSupport")
         assertTrue(Tagged::class.java.isAssignableFrom(loaded))
         val job = loaded.getConstructor().newInstance() as Tagged
@@ -170,7 +171,7 @@ internal class CoroutreeTransformerTest {
         private val APP: ClassLoader = CoroutreeTransformerTest::class.java.classLoader
         private const val JOB_SUPPORT = "kotlinx/coroutines/JobSupport"
 
-        /** What the agent said on stderr meanwhile: its diagnostics are echoed there. */
+        /** Returns what `action` wrote to stderr. The agent echoes its diagnostics there. */
         private fun stderrOf(action: () -> Unit): String {
             val original = System.err
             val captured = ByteArrayOutputStream()
@@ -185,7 +186,7 @@ internal class CoroutreeTransformerTest {
             return said
         }
 
-        /** A minimal class file, optionally with a source map and with a `suspend fun main` declared on a line. */
+        /** A minimal class file, with a source map when `smap` isn't null and a `suspend fun main` when `suspendMainLine` is positive. */
         private fun classFile(internalName: String, smap: String?, suspendMainLine: Int): ByteArray {
             val writer = ClassWriter(0)
             writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
@@ -215,7 +216,7 @@ internal class CoroutreeTransformerTest {
 
         private fun framesAt36(className: String): Int = RuntimeProbe.logicalFrames(className, "run", "Main.kt", 36).size
 
-        /** kotlinx.coroutines of whatever version: the class path as it is, with the version file replaced. */
+        /** The test class path with the kotlinx.coroutines version file replaced by `version`, or absent when `version` is null. */
         private fun coroutinesOfVersion(version: String?): ClassLoader = object : ClassLoader(APP) {
             override fun getResourceAsStream(name: String): InputStream? {
                 if (name != "META-INF/kotlinx_coroutines_core.version") return super.getResourceAsStream(name)

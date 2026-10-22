@@ -15,7 +15,7 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
-import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.test.v2.runComposeUiTest
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutree.gui.source.FeedStatus
@@ -60,7 +60,7 @@ class PaceUiTest {
 
     private fun test(viewModel: TraceViewModel, status: FeedStatus = FeedStatus.LIVE, block: ComposeUiTest.() -> Unit) = runComposeUiTest {
         setContent {
-            CoroutreeTheme(dark = false) { TraceScreen(viewModel, "demo", status, failure = null, onOpenFrame = {}, onClose = {}) }
+            CoroutreeTheme(dark = false) { TraceScreen(viewModel, "demo", status, failure = null, onOpenFrame = {}, onOpenNode = {}, onClose = {}) }
         }
         block()
     }

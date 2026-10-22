@@ -34,7 +34,7 @@ public val CrossLink.Kind.verb: String
         CrossLink.Kind.INTERRUPTS -> "interrupts"
     }
 
-/** Label for the link from a coroutine to its current thread. */
+/** Label for the link from a coroutine to its current thread, which is [NodeSnapshot.runsOn], not a [CrossLink]. */
 public const val RUNS_ON_VERB: String = "runs on"
 
 /** `Main.kt:12`, or an empty string when the frame carries no file name. */
@@ -86,7 +86,8 @@ public val StackFrameDef.isRuntimeFrame: Boolean
 private val RUNTIME_PREFIXES = listOf("java.", "javax.", "jdk.", "sun.", "kotlin.", "kotlinx.coroutines.")
 
 /**
- * Returns the innermost frame outside the concurrency runtime, or the innermost frame if all frames are runtime frames.
+ * Returns the frame where something happened in the program: the innermost frame outside the concurrency runtime,
+ * or the innermost frame when all are runtime frames.
  */
 public fun TraceSnapshot.siteOf(stack: List<Int>): StackFrameDef? {
     val frames = stack.mapNotNull(::frame)

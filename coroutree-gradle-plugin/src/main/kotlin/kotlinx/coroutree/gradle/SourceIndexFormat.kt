@@ -3,7 +3,8 @@ package kotlinx.coroutree.gradle
 import java.io.File
 
 /**
- * Shared with the agent's SourceIndexFile parser. UTF-8, one tab-separated record on each line:
+ * The text form of the source index. The agent's `SourceIndexFile` parses it into the trace header. UTF-8, one
+ * tab-separated record on each line:
  * ```
  * M <gradle project path> <absolute project dir>                      starts a module
  * F <package, may be empty> <file name> <path relative to the dir>    a source file of the last module
@@ -16,7 +17,7 @@ internal object SourceIndexFormat {
     fun fileRecord(packageName: String, fileName: String, relativePath: String): String =
         "F\t${clean(packageName)}\t${clean(fileName)}\t${clean(relativePath)}"
 
-    /** Concatenates [parts] in order, with each module record included only once. */
+    /** Concatenates [parts] in order. A module reached through two dependency paths is included once. */
     fun merge(parts: Iterable<File>): List<String> {
         val result = ArrayList<String>()
         val modules = HashSet<String>()
@@ -26,7 +27,7 @@ internal object SourceIndexFormat {
             part.forEachLine(Charsets.UTF_8) { line ->
                 when {
                     line.startsWith("M\t") -> {
-                        // Module identity includes the directory because composite builds can share a project path.
+                        // The directory is part of the key: two builds of a composite can both have an `:app`.
                         keep = modules.add(line)
                         if (keep) result.add(line)
                     }
@@ -41,7 +42,8 @@ internal object SourceIndexFormat {
         index.asSequence().filter { it.startsWith("F\t") }.map { it.split('\t').getOrElse(1) { "" } }.toSet()
 
     /**
-     * Excludes the root package because an empty prefix matches every library class.
+     * The shortest list of prefixes that covers [packages]: `a.b` goes when `a` is listed. The root package is never
+     * listed, because as a prefix it matches every library class.
      */
     fun minimalPrefixes(packages: Collection<String>): List<String> {
         val sorted = packages.filter { it.isNotEmpty() }.toSortedSet()

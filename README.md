@@ -20,7 +20,16 @@ Boxes show node state. Cross-links show launches, cancellation, interruption and
 | Minimap | Navigate a graph larger than the pane |
 | Legend | Toggle cross-link types |
 | *library / pools* | Show library-internal nodes and pools, hidden by default |
-| Hover / right-click a box | Inspect its source and context / open its source in the IDE |
+| Hover a box | Show its source and context |
+| Click a box | Select it and show its details |
+| Double-click a box | Open its source in the IDE |
+| Right-click a box | Open in IDE, zoom to node, subtree controls |
+| Click a frame or a source site | Open it in the IDE |
+
+Sources open in a running JetBrains IDE. The GUI finds the IDE through its process and hands the file to it through
+the IDE's launcher. With several IDEs running, the one that has the project open wins. A frame outside the project
+sources opens as a class, which needs the traced project open in that IDE. With no IDE running, the GUI reports it.
+`--ide <command>` or `ideCommand` replaces the launcher. The command opens project files only.
 
 For a live session, *Pause* / *Resume* (Space), *Step* (→) and the speed slider control the program.
 The slider ranges from one event in ten seconds to unlimited. Subtree controls are in the node's context menu and details pane.
@@ -38,11 +47,15 @@ A mark on a box identifies a subtree setting.
 ## Trying it
 
 ```sh
-./gradlew -p samples coroutreeView
+bin/coroutree-gui
 ./gradlew -p samples run -Psample=ExceptionPropagation -Pcoroutree
 ```
 
-Run these in separate terminals. The GUI lists traced JVMs and recent runs. Select the sample to open its trace.
+Run them in separate terminals. The GUI lists traced JVMs and recent runs. Select the sample to open its trace.
+`bin/coroutree-gui` rebuilds the GUI jar and runs it on the JDK in `JAVA_HOME` or on the path.
+`./gradlew :coroutree-gui:launch` rebuilds the jar and starts the GUI from an IDE's Gradle tool window.
+It takes the same arguments as the jar (`--trace`, `--session`, `--ide`, `--demo`). A project that applies the plugin
+can also start the GUI with `./gradlew coroutreeView`.
 For a longer live run, use `-Psample=Interactive` and press Enter in its terminal to end it.
 For a paused start, use `-Psample=PaceControl -Pcoroutree.pace.startPaused`, then resume or step from the GUI.
 Type `stop` and Enter in the program's terminal to end it.
@@ -63,13 +76,13 @@ coroutree {
     includePackages("com.acme")             // Default: the project's source packages
     excludePackages("com.acme.generated")
     live { enabled = true }                 // Default: true
-    pace {                                 // GUI control requires live
-        enabled = true                     // Default: true. false removes the gate and controls
-        startPaused = false                // Default: false. true holds at the first event
-        eventsPerSecond = 0.2              // Initial pace per sequence. Default: unlimited
+    pace {                                  // GUI control requires live
+        enabled = true                      // Default: true. false removes the gate and the controls
+        startPaused = false                 // Default: false. true holds at the first event
+        eventsPerSecond = 0.2               // Initial pace of each sequence. Default: unlimited
     }
-    stackDepth = 32                         // default: 32
-    ideCommand = "idea --line {line} {path}" // Default: IntelliJ's built-in server
+    stackDepth = 32                         // Default: 32
+    ideCommand = "idea --line {line} {path}" // Default: the launcher of a running JetBrains IDE
     sessionsDirectory = layout.buildDirectory.dir("coroutree/sessions") // Default: ~/.coroutree/sessions
 }
 ```
@@ -91,7 +104,7 @@ For a manually attached agent, the options are `live`, `pace`, `pace.paused` and
 Apply the plugin in every module whose sources must be navigable. Traces go to the root project's `build/coroutree/`,
 grouped by build invocation. The GUI finds running JVMs and recent traces in `~/.coroutree/sessions/`.
 `sessionsDirectory` in the DSL, or the agent option `sessions.dir`, changes that directory for a build, on CI for
-example. Set empty, the agent option writes no descriptor.
+example. An empty value writes no descriptor.
 
 Without Gradle:
 
@@ -120,6 +133,7 @@ reports a warning. If an internal that it hooks is missing, the agent reports an
 ```sh
 ./gradlew build                                              # everything, including all tests
 ./gradlew :coroutree-integration-tests:test -PupdateGoldens  # rewrite samples/golden after an intended change, then review the diff
+./gradlew :coroutree-gui:launch                             # build coroutree-gui/build/coroutree-gui.jar and start the GUI in the background
 ./gradlew :coroutree-gui:run --args="--demo"                 # the GUI on a synthetic trace (--demo=live streams it)
 ./gradlew :coroutree-gui:hotRun --auto                       # Compose Hot Reload
 ./gradlew :coroutree-gui:test -PscreenshotTrace=/path/x.ctrace   # offscreen renders in coroutree-gui/build/screenshots

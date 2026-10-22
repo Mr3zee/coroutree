@@ -51,13 +51,13 @@ public abstract class CoroutreeExtension {
     public abstract val stackDepth: Property<Int>
 
     /**
-     * Command template for the GUI to open a source location in the IDE.
-     * Default is unset, which uses the GUI's default command.
+     * Command template for the GUI to open a source location in the IDE, with `{path}` and `{line}`.
+     * Default is unset: the GUI runs the launcher of a running JetBrains IDE.
      */
     public abstract val ideCommand: Property<String>
 
     /**
-     * Where the agent publishes the session descriptor that the GUI's session list reads.
+     * The directory where the agent writes the session descriptor that the GUI's session list reads.
      * Default is unset, which uses the agent's default: `~/.coroutree/sessions`, shared by every build of the user.
      * Set it to keep a build's JVMs out of that list, on CI for example.
      */
@@ -91,7 +91,7 @@ public abstract class CoroutreeExtension {
     }
 
     /**
-     * Initial execution-control settings. The GUI can later change the pace, pause, or step the program or a subtree.
+     * How execution control starts. The GUI can then slow down, pause and step the program or a subtree.
      */
     public interface PaceSettings {
         /**
@@ -102,14 +102,14 @@ public abstract class CoroutreeExtension {
 
         /**
          * Whether to hold the program at its first event until a GUI resumes or steps it. Default is false.
-         * Requires [LiveSettings.enabled]. Otherwise, the agent reports a warning and runs without the initial pause.
+         * Requires [LiveSettings.enabled]. Otherwise the build reports a warning and the program runs.
          */
         public val startPaused: Property<Boolean>
 
         /**
          * Initial maximum events per second for each sequence: one flow or one node. Parallel sequences are paced independently.
          * When the last controlling GUI disconnects, the run returns to this pace.
-         * `0.2` is one event in five seconds. Default is unset for unlimited speed.
+         * `0.2` is one event in five seconds. Default is unset: no limit.
          */
         public val eventsPerSecond: Property<Double>
     }

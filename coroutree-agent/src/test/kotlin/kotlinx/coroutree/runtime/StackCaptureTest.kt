@@ -8,8 +8,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * What the agent reads off a stack (TRACE_FORMAT, "Source site"): the site of a new node is the innermost frame
- * outside the JDK, the Kotlin standard library and kotlinx.coroutines; the construct is the API that frame called.
+ * What the agent reads off a stack (TRACE_FORMAT, "Source site"). The site of a new node is the innermost frame
+ * outside the JDK, the Kotlin standard library, kotlinx.coroutines and the agent's runtime. The construct is the
+ * API that the site called.
  */
 internal class StackCaptureTest {
     @Test
@@ -20,7 +21,7 @@ internal class StackCaptureTest {
             3 to listOf("jdk.internal.misc.Unsafe.park", "java.util.concurrent.locks.LockSupport.park", "sun.nio.ch.Net.poll", "org.acme.Server.accept"),
             2 to listOf("kotlin.coroutines.ContinuationKt.startCoroutine", "javax.swing.Timer.start", "Main.main"),
             1 to listOf("kotlinx.coroutree.runtime.Hooks.threadStart", "kotlinx.serialization.json.Json.decode"),
-            // Prefixes are packages, not strings.
+            // The prefixes are package names, not string prefixes.
             0 to listOf("kotlinx.coroutinesx.Thing.run"),
             0 to listOf("javafx.application.Platform.runLater"),
             0 to listOf("kotlinpoet.Gen.run"),
@@ -55,11 +56,11 @@ internal class StackCaptureTest {
             "Thread.startVirtualThread" to listOf("java.lang.VirtualThread.start", "java.lang.Thread.startVirtualThread", site),
             "ThreadPoolExecutor.execute" to listOf(START, "java.util.concurrent.ThreadPoolExecutor.addWorker", "java.util.concurrent.ThreadPoolExecutor.execute", site),
             "CompletableFuture.supplyAsync" to listOf("java.util.concurrent.CompletableFuture.supplyAsync", site),
-            // A constructor is no name to go by: what was constructed says it better.
+            // A constructor names no construct, so the fallback stands.
             "fallback" to listOf("kotlinx.coroutines.JobImpl.<init>", site),
-            // A library's inline function between the site and the API, its name unknown.
+            // An inline frame without a name between the site and the API is skipped.
             "launch" to listOf("kotlinx.coroutines.BuildersKt.launch", "~kotlinx.coroutines.flow.FlowKt.", site),
-            // Nothing below the site: the site is where the hook was called.
+            // No frame under the site: the hook was called from the site itself.
             "fallback" to listOf(site, "java.lang.Thread.run"),
         )
         for ((construct, frames) in cases) {
@@ -79,12 +80,12 @@ internal class StackCaptureTest {
             true to listOf("java.lang.VirtualThread.start", "java.lang.Thread.startVirtualThread", site),
             // Inlined into a thread-starting API: part of it.
             true to listOf(START, "~kotlin.concurrent.ThreadsKt.thread", "kotlin.concurrent.ThreadsKt.thread", site),
-            // A timer thread behind delay, an executor growing, the JDK's own helpers: somebody's side effect.
+            // A frame of another kind between the site and the start (the timer thread of delay, a pool that grows, a JDK helper): the thread isn't the project's.
             false to listOf(START, "kotlinx.coroutines.DefaultExecutor.createThreadSync", "kotlinx.coroutines.DelayKt.delay", site),
             false to listOf(START, "java.util.concurrent.ThreadPoolExecutor.addWorker", "java.util.concurrent.ThreadPoolExecutor.execute", site),
             false to listOf(START, "java.lang.VirtualThread.<clinit>", "java.lang.ThreadBuilders\$VirtualThreadBuilder.start", site),
             false to listOf("java.lang.Thread.run", site),
-            // No runtime frame under the site at all, and no site at all.
+            // No frame under the site, and no site.
             false to listOf(site, START),
             false to listOf(START, "java.lang.Thread.run"),
         )
@@ -139,14 +140,14 @@ internal class StackCaptureTest {
         assertNotEquals(frame, StackFrameRef("com.acme.MainKt", "main", "Other.kt", 12))
         assertNotEquals(frame, StackFrameRef("com.acme.MainKt", "main2", "Main.kt", 12))
         assertNotEquals(frame, StackFrameRef("com.acme.Main", "main", "Main.kt", 12))
-        // Native and unknown lines are both "unknown", 0; a missing file name is an empty one.
+        // A negative line (native or unknown) becomes 0, and a missing file name becomes an empty one.
         assertEquals(StackFrameRef("C", "m", "", 0), StackFrameRef("C", "m", null, -2))
     }
 
     companion object {
         private const val START = "java.lang.Thread.start"
 
-        /** `Class.method` frames, innermost first; a leading `~` marks the body of an inline function. */
+        /** `Class.method` frames, innermost first. A leading `~` marks the body of an inline function. */
         private fun stack(frames: List<String>): Array<StackFrameRef> = Array(frames.size) { i ->
             val inlined = frames[i].startsWith("~")
             val frame = frames[i].removePrefix("~")

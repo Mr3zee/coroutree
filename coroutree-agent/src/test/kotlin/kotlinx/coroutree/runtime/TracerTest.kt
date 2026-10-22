@@ -15,12 +15,13 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * The path every event takes out of a hook, in a JVM that traces for real: sequence numbers, what the gate's step
- * leaves on an event, settings of the gate among the events, and the agent's talk about itself.
+ * The path of an event from a hook to the trace file, in a JVM that traces for real. The tests cover sequence
+ * numbers, what a step of the gate leaves on an event, settings of the gate among the events, and the agent's
+ * diagnostics.
  */
 @Timeout(120)
 internal class TracerTest {
-    /** A node the gate keeps time for, of nobody's structure. */
+    /** A node the gate paces, outside any tree. */
     private class Node : PaceNode(IDS.incrementAndGet()) {
         override fun isFinished(): Boolean = false
     }
@@ -58,7 +59,7 @@ internal class TracerTest {
                     val ts = ThreadState.current()
                     go.await()
                     for (i in 1..perThread) {
-                        ts.awaited = true // each its own step, through a gate that is not asked here
+                        ts.awaited = true // what await leaves, so emit reports no missed gate: each event is a step of its own
                         Tracer.emit(ts, TraceEvent(i.toLong(), Wire.RESUMED, thread.toLong()))
                         Pace.settle(ts)
                     }
@@ -68,7 +69,7 @@ internal class TracerTest {
             for (emitter in emitters) emitter.join()
         }
 
-        // Recording has checked that no number between the first and the last is missing; these are all of them.
+        // TracedJvm.record has checked that no sequence number up to the last is missing, so these are all of them.
         assertEquals(threads * perThread, recording.events.size)
         val lastOfThread = HashMap<Long, Long>()
         var previous = 0L
@@ -90,16 +91,16 @@ internal class TracerTest {
         var heldBefore = 0L
         val recording = TracedJvm.record("stepper") {
             val ts = ThreadState.current()
-            step(node, 2) // the first step of a sequence is not held
+            step(node, 2) // the first step of a sequence isn't held
 
             Pace.await(ts, node, node, null) // the second waits out the interval,
             released = ts.releaseNanos
-            Thread.sleep(3) // and its hook takes its time to put three events together
+            Thread.sleep(3) // and its hook takes 3 ms to put three events together
             repeat(3) { Tracer.emit(ts, TraceEvent(node.id, Wire.RESUMED, 0)) }
             Pace.settle(ts)
 
-            // A hook call that waited at the gate and then had nothing to report: its time is not lost. (Held right
-            // after a step of its sequence it is; tried again should the machine have stalled for the whole interval.)
+            // A hook call that waited at the gate and then emitted nothing: its hold carries to the thread's next
+            // event. The loop retries because the hold is zero when the machine stalled for the whole interval.
             var attempt = 0
             while (attempt < 50 && ts.heldNanos == 0L) {
                 step(node, 1)
@@ -132,7 +133,7 @@ internal class TracerTest {
         assertEquals(0, events[4].heldNanos)
         assertTrue(heldBefore > 0, "the step with nothing to report was held like any other")
         assertTrue(last.heldNanos >= heldBefore, "sums per thread are exact: time held for nothing is carried to the thread's next event")
-        // The time of a step is the moment the gate let it go, not the later moment its events were put together.
+        // The time of a step is the moment the gate released it, not the later moment its first event was emitted.
         assertEquals(released, second.timeNanos)
         assertTrue(events[3].timeNanos >= second.timeNanos + 3_000_000, "the others have the time they were emitted at")
         assertEquals(emptyList<String>(), recording.errors())
@@ -142,7 +143,7 @@ internal class TracerTest {
     fun anEventThatDidNotPassTheGateIsWrittenAndSaidLoudlyOncePerKind() {
         val recording = TracedJvm.record("forgetful") {
             val ts = ThreadState.current()
-            // A hook that emits without its await: one the user could not stop the program at.
+            // A hook that emits without its await: the user can't stop the program at its event.
             Tracer.emit(ts, TraceEvent(77, Wire.CANCELLATION_PROPAGATED, 0))
             Pace.settle(ts)
             Tracer.emit(ts, TraceEvent(77, Wire.CANCELLATION_PROPAGATED, 0))
@@ -176,7 +177,6 @@ internal class TracerTest {
     fun warmingTheGateUpLeavesNoMarkOnTheRealOneOrInTheTrace() {
         var held = -1L
         val recording = TracedJvm.record("warming-up") {
-            // Everything a held thread and a control reader will run, run once: commands, a hold, a step, a controller that leaves.
             Pace.warmUp()
             val ts = ThreadState.current()
             held = ts.heldNanos
@@ -202,7 +202,7 @@ internal class TracerTest {
             repeat(3) { Tracer.reportInternalError("tracerTest", IllegalStateException("the same every time")) }
             Tracer.reportInternalError("tracerTest", IllegalStateException("another"))
             Tracer.reportInternalError("tracerTest, elsewhere", IllegalStateException("the same every time"))
-            // This runs in the catch block of every hook: whatever it is given, nothing comes out of it.
+            // This runs in the catch block of every hook, so it throws nothing, whatever it is given.
             Tracer.reportInternalError("tracerTest", unprintable)
             Tracer.reportInternalError("tracerTest", null)
             Tracer.reportInternalError(null, null)

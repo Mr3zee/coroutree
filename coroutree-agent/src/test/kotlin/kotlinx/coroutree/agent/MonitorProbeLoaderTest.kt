@@ -6,13 +6,13 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 
 /**
- * Which build of the native monitor probe a JVM gets. Platform directories and file names are a contract with the
- * module's build script, which packs the binaries, and with the Gradle plugin, which unpacks the right one.
+ * The platform directories and file names of the native monitor probe are a contract. The module's build script
+ * packs the binaries under them, and the Gradle plugin (`HostPlatform`) unpacks the right one.
  */
 internal class MonitorProbeLoaderTest {
     @Test
     fun aJvmThatWasStartedWithoutTheProbeSaysSoInsteadOfFailing() {
-        // No -agentpath here: the native method is not there, which is an answer, not an error.
+        // The test JVM runs without `-agentpath`, so the native method isn't bound and `connect` returns false, not an exception.
         assertFalse(MonitorProbe.connect())
     }
 

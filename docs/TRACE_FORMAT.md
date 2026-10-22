@@ -24,7 +24,7 @@ Rules of the stream:
 - A reader treats an incomplete final frame as the end of the trace. This preserves readable data after a writer crash.
 - Writers omit Proto3 zero defaults. `0` means "none" for node and frame ids and "unknown" for line numbers.
   Every enum starts with `UNSPECIFIED = 0`.
-- A reader must skip unknown fields so the format can grow in one version.
+- A reader must skip unknown fields and read an unknown enum number as `UNSPECIFIED`, so the format can grow in one version.
 
 ## Schema
 
@@ -180,7 +180,7 @@ namespace, and only the numbers count.
 ## Semantics
 
 **Order.** Capture threads assign dense `seq` numbers, then enqueue events. Frames can arrive out of order.
-`TraceStore` waits for predecessors. At stream end or its pending-event limit, it releases buffered events in sequence order despite gaps.
+`TraceStore` waits for predecessors. At stream end, or with 4096 events waiting behind a gap, it releases them in sequence order.
 
 **Nodes.** The `node` of a `LAUNCHED` or `DISCOVERED` event defines a node. An event can refer to a node that the
 stream defines later, so a reader keeps a placeholder.
@@ -224,7 +224,7 @@ directly. A timer thread that `delay` starts has a site but is `LIBRARY`.
 
 The source site is in the project's inline function, or at the project call site for a library's inline function.
 These rules apply to event, exception and suspension stacks in project and library classes.
-A `crossinline` lambda has one frame with its real file and line.
+A lambda compiled into a copy of an inline function's anonymous class has one frame, with its real file and line.
 The synthetic `main(String[])` for `suspend fun main` has no line numbers, so it uses the declaration's line.
 
 **Execution control.** [DESIGN §3.1](DESIGN.md#31-execution-control-m12) defines sequences, steps and holds.
@@ -249,22 +249,24 @@ Holds cause no events or node states. The format records their duration and sett
 ## Live stream
 
 The live socket uses loopback TCP on a random port.
-Every agent writes `<sessions dir>/<pid>.json` to `~/.coroutree/sessions`, or the directory set by `sessions.dir`:
+Every agent writes `<sessions dir>/<pid>.json` to `~/.coroutree/sessions`, or the directory set by `sessions.dir`.
+An empty `sessions.dir` writes no descriptor.
 
 ```json
 {"pid":4242,"port":51234,"token":"9f…32 hex","traceFile":"/abs/run-4242.ctrace","taskPath":":app:run",
  "buildId":"20260917-211201-7c32","command":"com.acme.MainKt","startedAt":1789672321000,"ended":false}
 ```
 
-`paceable` is true when a live socket and gate are available. With `live=false`, the descriptor omits `port` and `token`.
-The GUI lists that run as a recorded trace.
+`paceable` is true when a live socket and gate are available. Without a socket the descriptor omits `port` and `token`,
+and has `"liveFailed":true` when `live=true` and the socket couldn't open. The GUI lists that run as a recorded trace.
 
 A client sends the token followed by `\n`, then receives the trace from its first byte and follows new frames until JVM exit.
 A wrong token closes the connection.
 
 On orderly shutdown, the agent sets `"ended":true`. After a crash, the GUI checks process identity and start time.
 The trace remains readable through the last flush.
-The GUI deletes descriptors with missing traces and retains the newest 50 ended descriptors. The agent never deletes them.
+The GUI deletes the descriptors of JVMs that are gone when their trace is gone, and all but the newest 50 of the rest.
+The agent never deletes them.
 
 ### Commands
 
@@ -285,7 +287,8 @@ Rules of the commands:
 - The first command for a node copies its governing setting into an independent override.
 - The agent sends no reply. Clients observe changes through `PaceDef` frames in the shared stream.
 - The last command wins.
-- A client that sent a well-formed command is a *controller*. `FAIL_OPEN` is about controllers.
+- A client that sent a well-formed command is a *controller*, also when the command named an unknown node.
+  `FAIL_OPEN` is about controllers.
 - The agent ignores unknown lines, unknown nodes and nodes that have ended.
 - Intervals above a day are a day.
 - In a JVM without a gate nobody reads what a client sends.

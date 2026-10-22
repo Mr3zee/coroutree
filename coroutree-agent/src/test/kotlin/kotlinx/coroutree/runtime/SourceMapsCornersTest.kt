@@ -5,9 +5,9 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 /**
- * Source maps beyond what kotlinc writes today (those are SourceMapsTest's): the corners of JSR-45 the parser
- * takes on, and what happens when the class file and the map do not tell the same story. Every class has a name of
- * its own: maps are kept per class name for the life of the JVM.
+ * Source maps beyond what kotlinc writes today (SourceMapsTest has those): the parts of JSR-45 that the parser
+ * accepts, and a class file that doesn't match its map. Maps are kept by class name for the life of the JVM, so
+ * each test uses a class name of its own.
  */
 internal class SourceMapsCornersTest {
     @Test
@@ -51,8 +51,8 @@ internal class SourceMapsCornersTest {
 
     @Test
     fun aClassDefinedAgainWithoutInlinedCodeHasNoMapAnyMore() {
-        // "A class that two loaders define differently has the map of whichever was loaded last": the one loaded last
-        // has only its own lines, so line 36 of it is its line 36, not what the first definition had inlined there.
+        // The definition loaded last has only its own lines, so its line 36 is Main.kt:36, not the inlined code of the
+        // first definition.
         val name = "com.acme.Replaced"
         SourceMaps.register(name, HEAD + "*S Kotlin\n" + files("Replaced") + "*L\n1#1,35:1\n23#2,3:36\n*S KotlinDebug\n" + files("Replaced") + "*L\n14#1:36,3\n*E\n", null)
         assertEquals(2, frames("Replaced", 36).size)
@@ -62,14 +62,14 @@ internal class SourceMapsCornersTest {
 
     @Test
     fun inlineCallsTheClassFileNamesButTheMapDoesNotKnowEndTheChainNotTheStack() {
-        // Line 53 is in withLock, inlined through retry and outer; but the line retry is said to be called from is no line of any copy.
+        // Line 53 is in withLock, inlined through retry and outer, but line 999, where retry is called from, is in no range of the map.
         SourceMaps.register(
             "com.acme.Chained",
             HEAD + "*S Kotlin\n" + files("Chained") + "*L\n1#1,35:1\n23#2,3:36\n117#2,10:52\n" +
                 "*S KotlinDebug\n" + files("Chained") + "*L\n14#1:36,3\n18#1:52,10\n*E\n",
             mapOf(
                 53 to Inlined(arrayOf("withLock", "retry", "outer"), intArrayOf(37, 999, 18)),
-                // A line the map does not have as inlined code: whatever the variable tables said about it is nothing.
+                // Line 20 is in no range of the map, so the parser removes its entry from the variable tables.
                 20 to Inlined(arrayOf("ghost"), intArrayOf(19))
             )
         )
@@ -83,7 +83,7 @@ internal class SourceMapsCornersTest {
     @Test
     fun linesThatAreNoLinesAreLeftAlone() {
         SourceMaps.register("com.acme.Unknown", HEAD + "*S Kotlin\n" + files("Unknown") + "*L\n23#2,3:36\n*S KotlinDebug\n" + files("Unknown") + "*L\n14#1:36,3\n*E\n", null)
-        // Native (-2), no line information (-1): unknown, which the format spells 0.
+        // The JVM gives -2 for a native method and -1 for no line information. The format writes 0 for both ("unknown").
         assertEquals(listOf("com.acme.Unknown.run(Main.kt:0)"), frames("Unknown", -2))
         assertEquals(listOf("com.acme.Unknown.run(Main.kt:0)"), frames("Unknown", -1))
         assertEquals(listOf("com.acme.Unknown.run(Main.kt:0)"), frames("Unknown", 0))

@@ -15,8 +15,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * The one thread that writes the trace file: what hooks hand over from any number of threads is in the file, whole,
- * a moment later, and to its last byte when the JVM goes down.
+ * The one thread that writes the trace file. What hooks enqueue from any number of threads is in the file a moment
+ * later, whole, and to its last byte when the JVM exits.
  */
 @Timeout(60)
 internal class TraceWriterThreadTest {
@@ -38,7 +38,7 @@ internal class TraceWriterThreadTest {
 
     @Test
     fun theFileStartsWithTheHeaderBeforeTheWriterEvenRuns() {
-        // Live clients and a GUI that opens the file find a trace from the first moment, in directories nobody made.
+        // A live client or a GUI that opens the file finds a trace from the first moment. The writer makes the directories.
         val file = File(dir, "traces/b42/run.ctrace")
         writer(file)
         val frames = TraceFiles.read(file)
@@ -63,10 +63,10 @@ internal class TraceWriterThreadTest {
             Thread {
                 go.await()
                 repeat(perThread) {
-                    // What Tracer.emit does: take a number, then enqueue. Another thread may get in between; some help it to.
+                    // What Tracer.emit does: take a number, then enqueue. Another thread can get in between, and the yield makes that likely.
                     val number = seq.incrementAndGet()
                     if ((number and 15L) == thread.toLong()) Thread.yield()
-                    // A few distinct frames shared by all: interning must not be confused by the interleaving.
+                    // Five distinct frames shared by all threads: the interleaving must not confuse interning.
                     writer.enqueue(event(number, StackFrameRef("com.acme.Worker", "step${number % 5}", "Worker.kt", (number % 5).toInt())))
                 }
             }.apply { start() }
@@ -98,12 +98,12 @@ internal class TraceWriterThreadTest {
     fun aBatchIsWrittenInSequenceOrderWithSettingsBehindTheEventTheyWereMadeAfter() {
         val file = File(dir, "batch.ctrace")
         val writer = writer(file)
-        // All of it is queued before the writer starts: one batch, whatever the machine does.
+        // Everything is queued before the writer starts, so it is one batch whatever the machine does.
         writer.enqueue(pace(0, 5)) // the configured setting, made before the first event
         writer.enqueue(event(2))
         writer.enqueue(pace(2, 22))
         writer.enqueue(event(1)) // a thread that took its number first and got here second
-        writer.enqueue(pace(2, 23)) // two changes after the same event keep the order they were made in
+        writer.enqueue(pace(2, 23)) // two changes after the same event stay in the order they were made in
         writer.enqueue(DiagnosticDef(Wire.INFO, "something about the capture"))
         writer.enqueue(event(4))
         writer.enqueue(event(3))
@@ -124,7 +124,7 @@ internal class TraceWriterThreadTest {
 
     @Test
     fun whatWasHandedOverIsInTheFileAMomentLaterWithoutAnybodyAsking() {
-        // A JVM that dies abruptly leaves a trace that is at most a moment behind: the writer flushes when it runs dry.
+        // The writer flushes when its queue is empty, so a JVM that dies abruptly leaves a trace at most a moment behind.
         val file = File(dir, "flush.ctrace")
         val writer = writer(file)
         writer.start()
@@ -158,7 +158,7 @@ internal class TraceWriterThreadTest {
 
     @Test
     fun whenTheWriterFailsTracingGoesOffInsteadOfTheProgram() {
-        // The switch the agent has for this test: the writer fails as it would on a full disk.
+        // The property makes the writer fail the way it fails on a full disk.
         System.setProperty("coroutree.debug.writerFailsAfterMillis", "0")
         val writer = try {
             writer(File(dir, "failing.ctrace"))
@@ -173,7 +173,7 @@ internal class TraceWriterThreadTest {
             assertFalse(writer.isAlive)
             assertFalse(Tracer.active, "hooks go quiet, and whoever is held at the gate goes, when the trace cannot be written")
             assertTrue(writer.isClosed(), "live clients are not left waiting for a file that will not grow")
-            writer.enqueue(event(2)) // hooks that were already past the check: nothing piles up, nothing throws
+            writer.enqueue(event(2)) // a hook that was already past the active check: nothing is queued, nothing throws
         } finally {
             Tracer.active = false
         }

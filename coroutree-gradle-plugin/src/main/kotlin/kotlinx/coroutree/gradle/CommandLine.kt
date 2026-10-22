@@ -5,8 +5,9 @@ import org.gradle.api.provider.Provider
 import org.gradle.api.provider.ProviderFactory
 
 /**
- * Gradle properties override build-script settings, so they can't be extension conventions.
- * Provider chains apply changed properties on configuration-cache reuse.
+ * The `-Pcoroutree.*` properties of one run. They override the build script in both directions, so they can't be
+ * extension conventions. Each is a provider chain, so a changed `-P` takes effect on a reused configuration cache.
+ * A value that doesn't parse fails the build and names the property.
  */
 internal class CommandLine(private val providers: ProviderFactory) {
     /** `true` (also bare: `-Pname`) or `false`. */

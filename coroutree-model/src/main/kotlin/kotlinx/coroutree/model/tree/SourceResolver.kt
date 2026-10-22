@@ -16,7 +16,9 @@ public data class SourceLocation(
 
 /**
  * Maps stack frames to source files with the index in the trace header.
- * If a package and file name match several files, the first index entry wins. Main sources precede test sources.
+ * A frame has its class and the bare name of its source file. Both languages put a class into its file's package,
+ * so `(package, file name)` identifies the file. When several files match, the first in index order wins.
+ * The index lists main before test.
  */
 public class SourceResolver(index: SourceIndex) {
     private class Entry(val module: String, val rootDir: String, val path: String)

@@ -103,11 +103,11 @@ public class CoroutreePlugin : Plugin<Project> {
         arguments.dataDirectory.set(dataDirectory)
         arguments.workDirectory.set(project.layout.buildDirectory.dir("coroutree/tmp/${task.name}").map { it.asFile.absolutePath })
         arguments.buildIdService.set(buildId)
+        // Through the loosely typed property: a typed map would cast across class loaders (see buildIdService).
+        arguments.runId.set(enabled.flatMap { on -> if (on) arguments.buildIdService.map { BuildIdService.idOf(it) } else project.providers.provider { "" } })
 
         forkOptions.jvmArgumentProviders.add(arguments)
         task.usesService(buildId)
-        // A run with the agent exists for its trace: test results being up to date is no reason to skip it.
-        task.outputs.upToDateWhen { !enabled.get() }
         task.outputs.doNotCacheIf("The coroutree agent is attached") { enabled.get() }
     }
 

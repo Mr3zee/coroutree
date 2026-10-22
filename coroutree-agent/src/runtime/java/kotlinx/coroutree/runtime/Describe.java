@@ -21,7 +21,19 @@ final class Describe {
         // kotlinx.coroutines prints many of its objects as Name@identity; the identity is just as meaningless.
         String identity = "@" + Integer.toHexString(System.identityHashCode(object));
         if (text.endsWith(identity) && text.length() > identity.length()) text = text.substring(0, text.length() - identity.length());
-        return truncate(text, MAX_VALUE_LENGTH);
+        return truncate(stripTrailingIdentity(text), MAX_VALUE_LENGTH);
+    }
+
+    /**
+     * {@code Executors$DelegatedExecutorService@3e6fa38a} at the end of a dispatcher's text: the identity of an object
+     * inside the element, which differs from run to run as well. Only {@code <identifier>@<hex>} at the very end goes.
+     */
+    private static String stripTrailingIdentity(String text) {
+        int at = text.lastIndexOf('@');
+        if (at <= 0 || at == text.length() - 1 || text.length() - at - 1 > 8) return text;
+        if (!Character.isJavaIdentifierPart(text.charAt(at - 1))) return text;
+        for (int i = at + 1; i < text.length(); i++) if (Character.digit(text.charAt(i), 16) < 0) return text;
+        return text.substring(0, at);
     }
 
     static TraceEvent.ExceptionDef exception(Throwable throwable, boolean withStack, int stackDepth) {

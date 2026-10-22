@@ -23,9 +23,9 @@ sourceSets {
 }
 
 // A "kotlinx.coroutines" whose internals do not match the agent's hook table, to see the agent say so.
-val fakeCoroutines: SourceSet by sourceSets.creating
+val fakeCoroutines = sourceSets.create("fakeCoroutines")
 
-val agentJar: Configuration by configurations.creating {
+val agentJar = configurations.create("agentJar") {
     isCanBeConsumed = false
     isTransitive = false
 }

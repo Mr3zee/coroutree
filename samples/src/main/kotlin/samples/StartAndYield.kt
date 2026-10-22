@@ -2,6 +2,7 @@ package samples
 
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
@@ -11,6 +12,7 @@ import kotlinx.coroutines.yield
  * ATOMIC one runs up to its first suspension; a lazy one is started by `join` or by `start`; an undispatched one
  * launches another undispatched one inside itself. And two coroutines that take turns with `yield`.
  */
+@OptIn(DelicateCoroutinesApi::class)
 fun main(): Unit = runBlocking {
     val default = launch(CoroutineName("default")) { println("unreachable") }
     default.cancel()

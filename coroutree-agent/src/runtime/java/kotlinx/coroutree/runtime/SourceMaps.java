@@ -41,7 +41,7 @@ public final class SourceMaps {
     public static void register(String className, String smap, Map<Integer, Inlined> inlined) {
         try {
             SourceMaps maps = parse(className, smap, inlined);
-            if (maps != null) BY_CLASS.put(className, maps);
+            if (maps != null) BY_CLASS.put(className, maps); else BY_CLASS.remove(className); // the definition loaded last counts
         } catch (RuntimeException e) {
             Tracer.reportInternalError("cannot read the source map of " + className, e);
         }
@@ -69,7 +69,8 @@ public final class SourceMaps {
         int bodyLine = from.inStart[body] + (line - from.outStart[body]) / from.step[body];
         int site = maps.callSite == null ? -1 : maps.callSite.find(line);
         if (site < 0) {
-            // An inline copy without call-site metadata needs source correction without frame expansion.
+            // No call site: the method is itself the copy (a lambda's class copied from an inline function), so the
+            // frame stays one and gets its real file and line.
             out.add(new StackFrameRef(from.classOf(body), methodName, from.fileOf(body), bodyLine));
             return;
         }

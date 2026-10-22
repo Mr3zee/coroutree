@@ -12,12 +12,12 @@ import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * The test JVM as a traced one: the tracer is started once, for good (it cannot be stopped), with a trace file that the
- * tests read back with coroutree-model, the other implementation of the format. Nothing is instrumented here; tests
- * call the hooks the way instrumented code would.
+ * The test JVM as a traced one: the tracer is started once (it has no stop), with a trace file that the tests read
+ * back with coroutree-model, the other implementation of the format. Nothing is instrumented here. Tests call the
+ * hooks the way instrumented code does.
  *
- * The JVM has a gate, the one [PaceTest] insists on and with the same pace, whichever class is loaded first:
- * [Pace.GATE] is made once per JVM from the configuration of that moment.
+ * [Pace.GATE] is made once for each JVM, from `Tracer.config` when `Pace` loads. This class and [PaceTest] set the
+ * same [GATE_OPTIONS] before that, so the JVM has the same gate whichever of the two loads first.
  */
 internal object TracedJvm {
     const val GATE_OPTIONS = "live=false,pace.events.per.second=1000"
@@ -28,7 +28,7 @@ internal object TracedJvm {
     val TRACE: File
     val CONFIG: AgentConfig
 
-    /** Node id of the events this class emits to find its place in the file; no node of a trace gets there. */
+    /** The node id of the events this class emits to find its place in the file. No node of a trace gets an id this high. */
     private const val SENTINEL = Long.MAX_VALUE - 7
 
     init {
@@ -37,7 +37,7 @@ internal object TracedJvm {
         DIR = Files.createTempDirectory("coroutree-agent-test").toFile()
         TRACE = File(DIR, "unit.ctrace")
         DIR.deleteOnExit()
-        TRACE.deleteOnExit() // after the agent's own shutdown hook has closed it
+        TRACE.deleteOnExit() // deleted after the agent's own shutdown hook has closed it
         // sessions.dir: a test JVM must not register itself where the user's GUI looks.
         CONFIG = AgentConfig.parse(
             "trace.file=$TRACE,sessions.dir=${File(DIR, "sessions")},$GATE_OPTIONS" +
@@ -51,8 +51,8 @@ internal object TracedJvm {
     }
 
     /**
-     * Runs the scenario on a thread of its own (a thread the agent has never seen, with nothing on its books) while
-     * tracing is on, and returns what went into the trace file meanwhile.
+     * Runs the scenario on a new thread, which the agent has never seen and whose [ThreadState] no test has touched,
+     * while tracing is on. Returns what went into the trace file meanwhile.
      */
     fun record(threadName: String, scenario: () -> Unit): Recording {
         val failure = AtomicReference<Throwable?>()
@@ -88,10 +88,10 @@ internal object TracedJvm {
         return Recording(awaitFrames(end), first, begin, end)
     }
 
-    /** An event of no kind on no node: it takes a sequence number, and when it is in the file so is everything before it. */
+    /** An event of no kind on no node. It takes a sequence number, so when it is in the file, every event before it is too. */
     private fun sentinel(): Long {
         val ts = ThreadState.current()
-        ts.awaited = true // what a hook's await leaves; emit insists on it
+        ts.awaited = true // what a hook's await leaves, and what emit requires
         val event = TraceEvent(SENTINEL, 0, 0)
         Tracer.emit(ts, event)
         Pace.settle(ts)
@@ -99,7 +99,7 @@ internal object TracedJvm {
         return event.seq
     }
 
-    /** The frames of the file once the sentinel and every event before it are there; the list ends with the sentinel. */
+    /** The frames of the file after the sentinel and every event before it are in it. The list ends with the sentinel. */
     private fun awaitFrames(sentinelSeq: Long): List<Frame> {
         val deadline = System.nanoTime() + 30_000_000_000L
         while (true) {
@@ -140,7 +140,7 @@ internal object TracedJvm {
 
         fun of(nodeId: Long): List<Event> = events.filter { it.nodeId == nodeId }
 
-        /** The kinds of the node's events in order, with what tells two of a kind apart: `THREAD_BLOCKED(SLEEP)`. */
+        /** The kinds of the node's events in order, with the detail that distinguishes two of a kind: `THREAD_BLOCKED(SLEEP)`. */
         fun story(nodeId: Long): List<String> = of(nodeId).map(::describe)
 
         fun errors(): List<String> = diagnostics.filter { it.severity == Diagnostic.Severity.ERROR }.map { it.message }

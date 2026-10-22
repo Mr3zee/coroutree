@@ -7,8 +7,8 @@ import java.time.format.DateTimeFormatter
 import kotlin.random.Random
 
 /**
- * The id must change for each invocation, including configuration-cache reuse.
- * Computing it during configuration would cache the id across invocations.
+ * Names the build invocation, which groups the traces of the JVMs it forks. A build service is created for each
+ * invocation, also on configuration-cache reuse. An id computed while configuring would be frozen into the cache.
  */
 internal abstract class BuildIdService : BuildService<BuildServiceParameters.None> {
     val buildId: String by lazy {
@@ -20,7 +20,7 @@ internal abstract class BuildIdService : BuildService<BuildServiceParameters.Non
     companion object {
         const val NAME = "coroutreeBuildId"
 
-        /** Reflection supports services loaded by another project's class loader. */
+        /** Reflection for a service that another project's class loader loaded. */
         fun idOf(service: BuildService<*>): String =
             if (service is BuildIdService) service.buildId else service.javaClass.getMethod("getBuildId").invoke(service) as String
         private const val ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"

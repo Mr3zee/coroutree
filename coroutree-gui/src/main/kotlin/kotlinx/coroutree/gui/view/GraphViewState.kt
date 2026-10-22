@@ -8,9 +8,9 @@ import kotlinx.coroutree.gui.view.graph.GraphLayout
 import kotlin.math.abs
 
 /**
- * During layout animation, the selected node stays at its screen position.
- * Without a selection, the nearest visible node to the pane's center anchors the viewport.
- * While [autoFit] is true, the viewport fits the whole graph instead (DESIGN §6.1).
+ * What the graph pane shows: the layout, the animation of the boxes towards it, and the viewport.
+ * During the animation the selected node stays where it is on screen. Without a selection, the node nearest the
+ * middle of the pane does. While [autoFit] is true, the viewport fits the whole graph instead (DESIGN §6.1).
  */
 class GraphViewState {
     var viewport: Viewport by mutableStateOf(Viewport())
@@ -43,8 +43,8 @@ class GraphViewState {
     }
 
     /**
-     * If true, the caller must call [advance] with animation fractions up to 1.
-     * The first layout and layouts above [ANIMATION_LIMIT] appear immediately.
+     * Makes [newLayout] the one to show. Returns whether an animation runs: then the caller calls [advance] with
+     * fractions up to 1. The first layout, and one with more than [ANIMATION_LIMIT] boxes, appears without animation.
      */
     fun show(newLayout: GraphLayout, selectedNodeId: Long?): Boolean {
         if (newLayout === layout) return !settled

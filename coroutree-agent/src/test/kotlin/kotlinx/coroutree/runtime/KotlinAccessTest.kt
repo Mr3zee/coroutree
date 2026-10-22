@@ -20,9 +20,9 @@ import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.jvm.internal.CoroutineStackFrame
 
 /**
- * How the runtime, which cannot link against Kotlin, reads Kotlin's objects: against the real kotlin-stdlib and
- * kotlinx.coroutines, uninstrumented (so no job here is one "this agent instruments"). What a context element looks
- * like in the trace is TRACE_FORMAT's `ContextElement`.
+ * How the runtime, which can't link against Kotlin, reads Kotlin's objects: against the real kotlin-stdlib and
+ * kotlinx.coroutines, not instrumented, so no job here is one that the agent instruments. The form of a context
+ * element in the trace is `ContextElement` in TRACE_FORMAT.
  */
 @Timeout(60)
 internal class KotlinAccessTest {
@@ -70,7 +70,7 @@ internal class KotlinAccessTest {
 
     @Test
     fun theLibrarysOwnBookkeepingIsNotInAContext() {
-        // The numbering of coroutines in debug mode (every JVM with -ea is in it), and the marker withContext leaves.
+        // The number of a coroutine in debug mode (on in every JVM with -ea), and the marker that withContext adds.
         assertEquals("hidden", entry(internalInstance("kotlinx.coroutines.CoroutineId", 7L)))
         val marker = Class.forName("kotlinx.coroutines.UndispatchedMarker").getDeclaredField("INSTANCE")
         marker.isAccessible = true
@@ -85,7 +85,7 @@ internal class KotlinAccessTest {
         assertEquals(emptyList<Any>(), access.elements(EmptyCoroutineContext))
         assertEquals(listOf(name), access.elements(name))
         assertEquals(listOf(job, name, mdc, tenant), access.elements(job + name + mdc + tenant))
-        // The interceptor is kept last by the standard library itself, wherever it was added.
+        // The standard library puts the interceptor last, wherever it was added.
         val withDispatcher = access.elements(job + Dispatchers.Default + name)
         assertEquals(3, withDispatcher.size)
         assertTrue(withDispatcher.containsAll(listOf(job, name, Dispatchers.Default)), withDispatcher.toString())
@@ -120,7 +120,7 @@ internal class KotlinAccessTest {
         assertNull(access.failureOfResult(failure))
     }
 
-    /** A frame somebody wrote by hand, as a flow's SafeCollector or a library's own continuation is. */
+    /** A frame written by hand, like a flow's `SafeCollector` or a library's own continuation. */
     private class HandWritten(method: String?, line: Int, override var callerFrame: CoroutineStackFrame?) : CoroutineStackFrame {
         private val element = method?.let { StackTraceElement("com.acme.Flow", it, "Flow.kt", line) }
 
@@ -137,7 +137,7 @@ internal class KotlinAccessTest {
         assertEquals(emptyList<String>(), methods(access.coroutineStack("not a frame", 16)))
         assertEquals(emptyList<String>(), methods(access.coroutineStack(null, 16)))
 
-        // Application code again: a chain that leads back into itself must not hang the thread that suspends.
+        // A cycle in the chain is application data: it must not hang the thread that suspends.
         outer.callerFrame = inner
         assertEquals(16, access.coroutineStack(inner, 16).size)
 
@@ -148,8 +148,8 @@ internal class KotlinAccessTest {
     }
 
     /**
-     * What Ktor's pipeline bridge (`SuspendFunctionGun`) does: the getter hands out the next saved caller and moves
-     * on, so a read of it is a step, not a lookup. Ktor documents concurrent inspection of it as best effort.
+     * Behaves like Ktor's pipeline bridge (`SuspendFunctionGun`): each read of `callerFrame` returns the next saved
+     * caller and advances, so a read is a step, not a lookup. Ktor documents concurrent inspection of it as best effort.
      */
     private class Cursor(private vararg val saved: CoroutineStackFrame) : CoroutineStackFrame {
         var next = 0
@@ -173,10 +173,10 @@ internal class KotlinAccessTest {
     fun repeatedWalksOfAStatefulBridgeEachTakeOneStepPerReportedFrame() {
         val bridge = Cursor(HandWritten("a", 1, null), HandWritten("b", 2, null))
 
-        // The bridge is read once to get to "a", which ends the chain. Limit 2 is met by "a" without a further read.
+        // One read of the bridge reaches "a", which ends the chain. "a" meets the limit of 2, so the walk reads no further.
         assertEquals(listOf("loop:1", "a:1"), methods(access.coroutineStack(bridge, 2)))
         assertEquals(1, bridge.next)
-        // The next walk sees what the bridge's cursor gives it now: that is the bridge's contract.
+        // The next walk gets what the cursor gives now: that is the bridge's contract.
         assertEquals(listOf("loop:1", "b:2"), methods(access.coroutineStack(bridge, 16)))
         assertEquals(2, bridge.next)
         assertEquals(listOf("loop:1"), methods(access.coroutineStack(bridge, 16)), "an exhausted cursor ends the chain")
@@ -212,14 +212,14 @@ internal class KotlinAccessTest {
 
         private fun methods(stack: Array<StackFrameRef>): List<String> = stack.map { "${it.methodName}:${it.line}" }
 
-        /** An instance of a class that is `internal` to its library: public to Java and to the agent, not to Kotlin. */
+        /** An instance of a class that is `internal` in its library: public to Java and to the agent, not to Kotlin. */
         private fun internalInstance(className: String, vararg arguments: Any): Any {
             val type = Class.forName(className)
             val constructor = type.declaredConstructors.single { it.parameterCount == arguments.size }
             return constructor.newInstance(*arguments)
         }
 
-        /** What `resumeWith` is handed for a failed `Result`: the unboxed `Result.Failure`, not the value class. */
+        /** What `resumeWith` gets for a failed `Result`: the unboxed `Result.Failure`, not the value class. */
         private fun rawFailure(failure: Throwable): Any = internalInstance("kotlin.Result\$Failure", failure)
     }
 }

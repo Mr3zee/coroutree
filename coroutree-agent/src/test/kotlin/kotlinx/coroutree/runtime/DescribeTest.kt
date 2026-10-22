@@ -9,14 +9,13 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.CancellationException
 
 /**
- * Application objects become trace strings by running application code, inside a hook, on the application's thread:
- * whatever that code does, a description comes out, nothing is thrown, and nothing that differs from run to run
- * (identity hashes) or has no bound (a toString of megabytes) gets into the trace.
+ * `Describe` runs application code (`toString`, `getMessage`, `getStackTrace`) inside a hook, on the application's
+ * thread. Whatever that code does, a description comes out and nothing is thrown. Nothing that differs from run to
+ * run (an identity hash) or has no bound (a `toString` of megabytes) gets into the trace.
  */
 internal class DescribeTest {
     private class Plain
 
-    /** A toString that returns what it was given, or throws when it was given nothing. */
     private class Named(private val text: String?) {
         override fun toString(): String = text!!
     }
@@ -58,7 +57,7 @@ internal class DescribeTest {
     @Test
     fun applicationCodeThatMisbehavesStillGetsADescriptionAndNothingIsThrown() {
         assertEquals("DescribeTest\$Throwing (toString threw java.lang.IllegalStateException)", Describe.value(Throwing(IllegalStateException("no"))))
-        // Errors too: a hook must not let an AssertionError of the application's toString out into the application.
+        // Errors are caught too, not only exceptions: a hook never throws into the application.
         assertEquals("DescribeTest\$Throwing (toString threw java.lang.AssertionError)", Describe.value(Throwing(AssertionError("no"))))
         val recursive = Describe.value(Recursive())
         assertTrue(recursive.startsWith("DescribeTest\$Recursive (toString threw java.lang.StackOverflowError"), recursive)

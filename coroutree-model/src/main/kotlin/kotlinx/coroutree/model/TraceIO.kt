@@ -50,7 +50,8 @@ public class TraceWriter(private val out: OutputStream) : Closeable {
 }
 
 /**
- * Reads frames until the stream ends. An incomplete final frame ends the trace without an error.
+ * Reads frames until the stream ends. A trace is append-only and its producer can die at any moment,
+ * so an incomplete final frame ends the trace without an error.
  */
 public class TraceReader(input: InputStream) : Closeable {
     private val input = DataInputStream(input as? BufferedInputStream ?: BufferedInputStream(input))

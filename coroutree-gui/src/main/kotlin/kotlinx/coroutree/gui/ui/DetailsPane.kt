@@ -229,22 +229,22 @@ private fun LazyListScope.executionControl(node: NodeSnapshot, viewModel: TraceV
 private fun LazyListScope.stack(snapshot: TraceSnapshot, frameIds: List<Int>, keyPrefix: String, onOpenFrame: (StackFrameDef) -> Unit) {
     items(frameIds.size, key = { "$keyPrefix-$it" }) { index ->
         val frame = snapshot.frame(frameIds[index])
-        if (frame != null) FrameLine(snapshot, frame, onOpenFrame) else Label("frame #${frameIds[index]}", Modifier.padding(horizontal = 12.dp), Type.code, palette.textDim)
+        if (frame != null) FrameLine(snapshot, frame, onOpenFrame, Modifier.testTag("frame-${frame.id}")) else Label("frame #${frameIds[index]}", Modifier.padding(horizontal = 12.dp), Type.code, palette.textDim)
     }
 }
 
-/** A stack frame. Frames that map to a project source file stand out and open in the IDE on click. */
+/** A stack frame. Every frame opens in the IDE on click: project frames at their line, the others at their class. */
 @Composable
 private fun FrameLine(snapshot: TraceSnapshot, frame: StackFrameDef, onOpenFrame: (StackFrameDef) -> Unit, modifier: Modifier = Modifier) {
-    val openable = snapshot.sources.isKnown(frame)
+    val project = snapshot.sources.isKnown(frame)
     Row(
         modifier.fillMaxWidth().height(20.dp)
-            .then(if (openable) Modifier.rowBackground(selected = false).handCursor().clickable { onOpenFrame(frame) } else Modifier)
+            .rowBackground(selected = false).handCursor().clickable { onOpenFrame(frame) }
             .padding(start = 12.dp, end = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Label(if (openable) "↗" else " ", Modifier.width(16.dp), Type.codeSmall, palette.accent)
-        Label(frame.qualified, Modifier.weight(1f), Type.codeSmall, if (openable) palette.text else palette.textDim)
+        Label("↗", Modifier.width(16.dp), Type.codeSmall, if (project) palette.accent else palette.textDim)
+        Label(frame.qualified, Modifier.weight(1f), Type.codeSmall, if (project) palette.text else palette.textDim)
     }
 }
 

@@ -4,9 +4,9 @@ import kotlinx.coroutree.model.Event
 import kotlinx.coroutree.model.EventKind
 
 /**
- * Renders a snapshot as stable, indented text for trace comparison.
- * Omits ids, timestamps, sequence numbers, and thread names in resume events.
- * Includes the tree, node states, context diffs, and each node's events in order.
+ * Renders a snapshot as indented text: the form the golden-tree tests compare.
+ * Everything that differs between two runs of one deterministic program is left out: ids, timestamps,
+ * sequence numbers, and thread names in `resumed on …`.
  */
 public class TreeRenderer(
     /** Nodes for which this returns `false` are omitted together with their subtrees. */

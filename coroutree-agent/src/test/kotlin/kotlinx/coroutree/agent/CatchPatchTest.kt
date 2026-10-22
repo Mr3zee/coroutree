@@ -9,10 +9,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * "Handled by catch" comes from the catch blocks of project classes that handle something. A handler that only passes
- * the exception on (finally, synchronized, try-with-resources, clean up and rethrow) reports nothing, or every
- * exception would show as caught once per resource it passes on its way up. The class is rewritten the way the
- * agent rewrites it, verified by the JVM, and run next to the class as compiled.
+ * `exceptionCaught` is reported from the catch blocks of project classes that handle the exception. A handler that
+ * only rethrows it (`finally`, `synchronized`, try-with-resources, clean up and rethrow) reports nothing, or the
+ * trace shows one exception as caught at each such handler on its path. The JVM verifies the rewritten class, and
+ * each test runs it next to the class as compiled.
  */
 internal class CatchPatchTest {
     @BeforeEach
@@ -40,7 +40,7 @@ internal class CatchPatchTest {
         val resource = AutoCloseable { log.add("closed") }
         assertEquals(emptyList<Any>(), caught("resource", resource, throwing(failure)))
         assertEquals(emptyList<Any>(), caught("resource", resource, FINE))
-        // Typed, and still cleanup in disguise: whatever it does on the way, every way out is `throw e` of what it caught.
+        // A typed handler is a cleanup handler too when every exit is `throw e` of the exception it caught.
         log.clear()
         assertEquals(emptyList<Any>(), caught("cleansUpAndRethrows", throwing(failure), log))
         assertEquals(listOf("cleanup", "cleanup"), log)
@@ -51,7 +51,7 @@ internal class CatchPatchTest {
         val failure = IllegalStateException("boom")
         assertEquals(listOf(failure), caught("wraps", throwing(failure)), "another exception leaves: this one was handled")
         assertEquals(listOf(failure), caught("rethrowsSometimes", throwing(failure), false))
-        // Decided when the class is loaded, not when it runs: a handler with a way out that handles is one that handles.
+        // The decision is made from the bytecode: a handler with one exit that doesn't rethrow reports on every run.
         assertEquals(listOf(failure), caught("rethrowsSometimes", throwing(failure), true))
         assertEquals(listOf(failure), caught("throwsSomethingElseFromTheSameVariable", throwing(failure)), "the variable is another exception by then")
     }
@@ -60,7 +60,7 @@ internal class CatchPatchTest {
     fun everyCatchReportsOncePerExceptionItCatches() {
         val state = IllegalStateException("state")
         val argument = IllegalArgumentException("argument")
-        // One handler for two types is one catch block.
+        // A multi-catch is two try-catch blocks with one handler, so it reports once.
         assertEquals(listOf(state), caught("multi", throwing(state)))
         assertEquals(listOf(argument), caught("multi", throwing(argument)))
         assertEquals(emptyList<Any>(), caught("multi", throwing(UnsupportedOperationException("neither"))))
@@ -89,7 +89,7 @@ internal class CatchPatchTest {
 
         private fun throwing(failure: RuntimeException) = Runnable { throw failure }
 
-        /** Same outcome as the class as compiled; returns the exceptions reported as caught, in order. */
+        /** Checks that the patched class gives the same outcome as the class as compiled. Returns the exceptions it reported as caught, in order. */
         private fun caught(method: String, vararg arguments: Any?): List<Any?> {
             val expected = Lab.call(Catching::class.java, method, *arguments)
             HookLog.take()

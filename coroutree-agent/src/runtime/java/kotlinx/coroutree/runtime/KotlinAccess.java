@@ -170,8 +170,8 @@ final class KotlinAccess {
     }
 
     /**
-     * Restricted frames usually identify generators. Intrinsics frames are an exception: they also start ordinary suspend functions,
-     * including suspend main, when the context is empty.
+     * A frame of a {@code @RestrictsSuspension} coroutine is a generator's, except the frames of
+     * {@code kotlin.coroutines.intrinsics}: those also start ordinary suspend functions, {@code suspend main} included.
      */
     boolean isGeneratorFrame(Object continuation) {
         return restrictedContinuation.isInstance(continuation) && !continuation.getClass().getName().startsWith("kotlin.coroutines.intrinsics.");

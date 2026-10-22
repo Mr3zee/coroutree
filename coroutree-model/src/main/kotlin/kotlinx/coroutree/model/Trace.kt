@@ -1,19 +1,27 @@
+@file:UseSerializers(
+    EventKindSerializer::class, NodeKindSerializer::class, NodeStateSerializer::class, OriginSerializer::class,
+    BlockReasonSerializer::class, HandledBySerializer::class, PropagationDirectionSerializer::class,
+    ContextElementKindSerializer::class, SeveritySerializer::class, PaceReasonSerializer::class,
+)
+
 package kotlinx.coroutree.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.UseSerializers
 import kotlinx.serialization.protobuf.ProtoNumber
 import kotlinx.serialization.protobuf.ProtoPacked
 
 /*
  * Schema in .proto notation: docs/TRACE_FORMAT.md.
  *
- * The agent encodes the same messages independently in kotlinx.coroutree.runtime.TraceEncoder.
- * Field and enum numbers must match both implementations. WireCompatibilityTest checks their compatibility.
+ * The agent encodes the same messages by hand in kotlinx.coroutree.runtime.TraceEncoder, so the field and enum
+ * numbers are the contract between the two. WireCompatibilityTest checks that they agree.
  *
  * Proto3 conventions:
  *
  * - Fields with zero defaults are omitted from the wire.
  * - Node id 0 means "none". Line number 0 means "unknown".
+ * - An enum number a reader doesn't know reads as `UNSPECIFIED` (OpenEnums.kt): proto3 enums are open.
  * - Enums start with UNSPECIFIED at 0.
  */
 
@@ -104,7 +112,7 @@ public data class StackFrameDef(
     @ProtoNumber(4) val fileName: String = "",
     @ProtoNumber(5) val line: Int = 0,
     /**
-     * Whether this frame is an inline function body in the method of the next stack frame. Default is false.
+     * Whether this frame is the body of an inline function that runs in the method of the next frame. Default is false.
      * [className] identifies the class that declares the function.
      * [methodName] identifies the function, or is empty when unknown.
      */
@@ -146,14 +154,14 @@ public data class Event(
     /** Definition of the node, for [EventKind.LAUNCHED] and [EventKind.DISCOVERED]. */
     @ProtoNumber(7) val node: NodeInfo? = null,
     /**
-     * The other node involved, or 0 if none. [nodeId] identifies the node where the event happens.
-     * This field identifies the source or related coroutine:
+     * The other node involved, or 0 if none. The event belongs to [nodeId], the node it happens to.
+     * This field identifies where it came from:
      *
      * - [EventKind.CANCELLATION_PROPAGATED]: the parent or child that propagated cancellation.
      * - [EventKind.EXCEPTION_PROPAGATED]: the child that propagated the exception.
      * - [EventKind.EXCEPTION_HANDLED] with [HandledBy.SUPERVISOR]: the child whose exception the supervisor handled.
      * - [EventKind.CANCELLATION_REQUESTED] or [EventKind.THREAD_INTERRUPTED]: the requester.
-     * - [EventKind.THREAD_BLOCKED] or [EventKind.THREAD_UNBLOCKED]: the coroutine that ran on the thread.
+     * - [EventKind.THREAD_BLOCKED] or [EventKind.THREAD_UNBLOCKED]: the coroutine that the thread was running.
      */
     @ProtoNumber(8) val otherNodeId: Long = 0,
     @ProtoNumber(9) val exception: ExceptionInfo? = null,
@@ -166,12 +174,12 @@ public data class Event(
     @ProtoNumber(14) val finalState: NodeState = NodeState.UNSPECIFIED,
     /**
      * Nanoseconds the agent held the thread for execution control since the thread's previous event. Default is 0.
-     * Agent holds cause no program event or state change.
+     * A hold is neither an event nor a state. This field is its only record.
      */
     @ProtoNumber(15) val heldNanos: Long = 0,
     /**
-     * Whether this event continues the previous step of [threadId]. Default is false.
-     * No program code runs between events in one step, such as *launched* and *context changed*.
+     * Whether this event is in the same step as the previous event of [threadId]. Default is false.
+     * No program code runs between the events of one step, such as *launched* and *context changed*.
      * Pacing and `step n` count steps.
      * Only written by a JVM that is [TraceHeader.paceable].
      */
@@ -179,9 +187,9 @@ public data class Event(
 )
 
 /**
- * An execution-control setting that takes effect at [afterSeq].
+ * An execution-control setting, in effect after the event [afterSeq].
  * [scopeNodeId] 0 selects the global setting. A nonzero id selects that node's structural subtree.
- * Settings have no [Event.seq] because they aren't program events.
+ * A setting has no [Event.seq] because it isn't a program event.
  */
 @Serializable
 public data class PaceDef(
@@ -196,7 +204,7 @@ public data class PaceDef(
     /** Steps this change let through a paused gate (`step n`), 0 for any other change. */
     @ProtoNumber(6) val steps: Int = 0,
     @ProtoNumber(7) val reason: Reason = Reason.UNSPECIFIED,
-    /** Whether the node resumes its inherited setting. Default is false. Never true for the global setting. */
+    /** Whether the node lost its own setting, so its parent's governs it again. Default is false. Never true for the global setting. */
     @ProtoNumber(8) val dropped: Boolean = false,
 ) {
     @Serializable
@@ -206,7 +214,7 @@ public data class PaceDef(
         @ProtoNumber(1) CONFIG,
         /** A command of a live client. */
         @ProtoNumber(2) CONTROLLER,
-        /** No controller remains or can connect. Restores the configured pace and clears all pauses. */
+        /** The last controller left, or the JVM has no live socket for one. Restores the configured pace, with nothing paused. */
         @ProtoNumber(3) FAIL_OPEN,
         /** JVM shutdown releases all holds. */
         @ProtoNumber(4) SHUTDOWN,
@@ -349,7 +357,7 @@ public data class ContextElement(
     @ProtoNumber(2) val key: String = "",
     /** The element's `toString()` value, verbatim. Empty for the Job element because the node identifies the job. */
     @ProtoNumber(3) val value: String = "",
-    /** Whether the element changes thread state on every resume and suspend as a `ThreadContextElement`. Default is false. */
+    /** Whether the element is a `ThreadContextElement`, which changes thread state on every resume and suspend. Default is false. */
     @ProtoNumber(4) val threadContextElement: Boolean = false,
 )
 

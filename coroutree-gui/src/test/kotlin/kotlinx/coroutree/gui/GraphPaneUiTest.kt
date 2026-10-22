@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -25,7 +26,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.rightClick
-import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.test.v2.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutree.gui.demo.DemoTrace
@@ -35,7 +36,6 @@ import kotlinx.coroutree.gui.ui.GraphPane
 import kotlinx.coroutree.gui.view.TraceViewModel
 import kotlinx.coroutree.gui.view.graph.EdgeKind
 import kotlinx.coroutree.model.EventKind
-import kotlinx.coroutree.model.StackFrameDef
 import kotlinx.coroutree.model.tree.TraceSnapshot
 import kotlin.math.abs
 import kotlin.test.Test
@@ -51,13 +51,13 @@ class GraphPaneUiTest {
     private val snapshot = demoSnapshot()
     private val viewModel = TraceViewModel()
     private val view get() = viewModel.graphView
-    private val opened = mutableListOf<StackFrameDef>()
+    private val opened = mutableListOf<Long>()
 
     private fun test(initial: TraceSnapshot = snapshot, width: Int = 900, height: Int = 520, block: ComposeUiTest.() -> Unit) = runComposeUiTest {
         viewModel.snapshot = initial
         setContent {
             CoroutreeTheme(dark = false) {
-                Box(Modifier.size(width.dp, height.dp)) { GraphPane(viewModel, onOpenFrame = { opened += it }) }
+                Box(Modifier.size(width.dp, height.dp)) { GraphPane(viewModel, onOpenNode = { opened += it }) }
             }
         }
         waitForIdle()
@@ -237,6 +237,38 @@ class GraphPaneUiTest {
         assertTrue(abs(after.x - pointer.x) < 1f && abs(after.y - pointer.y) < 1f, "what was under the pointer still is: $pointer → $after")
     }
 
+    /** README: "Click a box: select it. Double-click a box: open its source in the IDE". The first click doesn't wait for a second. */
+    @Test
+    fun aClickSelectsAtOnceAndADoubleClickOpensTheSourceAsWell() = test {
+        val payment = snapshot.named("payment")
+        onNodeWithTag("node-${payment.id}").performMouseInput { click() }
+        assertEquals(payment.id, viewModel.selectedNodeId)
+        assertEquals(emptyList(), opened)
+
+        // Pointer events have a clock of their own: advanceEventTime, not mainClock, separates the clicks.
+        onNodeWithTag("node-${payment.id}").performMouseInput {
+            advanceEventTime(1000)
+            doubleClick()
+        }
+        waitForIdle()
+        assertEquals(listOf(payment.id), opened)
+
+        // Two clicks far apart in time are two single clicks.
+        onNodeWithTag("node-${payment.id}").performMouseInput {
+            advanceEventTime(1000)
+            click()
+            advanceEventTime(1000)
+            click()
+        }
+        assertEquals(listOf(payment.id), opened)
+
+        // A right click is no click and no selection change.
+        viewModel.clearSelection()
+        onNodeWithTag("node-${payment.id}").performMouseInput { rightClick() }
+        waitForIdle()
+        assertNull(viewModel.selectedNodeId)
+    }
+
     @Test
     fun rightClickOnABoxOffersToOpenItsSourceInTheIde() = test {
         val payment = snapshot.named("payment")
@@ -244,7 +276,7 @@ class GraphPaneUiTest {
         waitForIdle()
         onNodeWithText("Open in IDE").performClick()
         waitForIdle()
-        assertEquals(listOf("Checkout.kt" to 73), opened.map { it.fileName to it.line })
+        assertEquals(listOf(payment.id), opened)
 
         onNodeWithTag("node-${payment.id}").performMouseInput { rightClick() }
         waitForIdle()
@@ -270,7 +302,7 @@ class GraphPaneUiTest {
         onNodeWithTag("card-site").performMouseInput { moveTo(center) }
         mainClock.advanceTimeBy(1000)
         onNodeWithTag("card-site").assertTextEquals("↗ Checkout.kt:17").performClick()
-        assertEquals(listOf("Checkout.kt" to 17), opened.map { it.fileName to it.line })
+        assertEquals(listOf(inventory.id), opened)
 
         onNodeWithTag("graph").performMouseInput { moveTo(Offset(3f, 3f)) }
         mainClock.advanceTimeBy(1000)

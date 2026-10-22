@@ -13,16 +13,13 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.UntrackedTask
 import java.io.File
 
-/**
- * Starts the standalone GUI and returns immediately. The GUI continues after the build ends.
- * It lists traced JVMs from all builds.
- */
+/** Starts the GUI, which lists the traced JVMs of every build, and returns. The GUI runs on after the build ends. */
 @UntrackedTask(because = "Launches an application")
 public abstract class CoroutreeViewTask : DefaultTask() {
     @get:Classpath
     public abstract val guiClasspath: ConfigurableFileCollection
 
-    /** `<root build dir>/coroutree`: traces, and the GUI's log. */
+    /** `<root build dir>/coroutree`: traces, launch markers and the GUI's log. */
     @get:Internal
     public abstract val dataDirectory: Property<String>
 
@@ -30,7 +27,7 @@ public abstract class CoroutreeViewTask : DefaultTask() {
     @get:Optional
     public abstract val ideCommand: Property<String>
 
-    /** Whether to print the command without execution. Set with `-Pcoroutree.view.dryRun`. Default is false. */
+    /** Whether to print the command line instead of running it. `-Pcoroutree.view.dryRun` sets it. Default is false. */
     @get:Input
     public abstract val dryRun: Property<Boolean>
 
@@ -63,7 +60,7 @@ public abstract class CoroutreeViewTask : DefaultTask() {
         }
 
         dataDir.mkdirs()
-        // A root invocation can run this task in several projects. Only the first task starts a GUI.
+        // A root invocation runs this task in every project that has it. The first one starts the GUI.
         val buildId = BuildIdService.idOf(buildIdService.get())
         dataDir.listFiles { file -> file.name.startsWith(LAUNCH_MARKER_PREFIX) && file.name != LAUNCH_MARKER_PREFIX + buildId }?.forEach { it.delete() }
         if (!File(dataDir, LAUNCH_MARKER_PREFIX + buildId).createNewFile()) {

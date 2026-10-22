@@ -22,10 +22,10 @@ import java.util.concurrent.ForkJoinPool
 import java.util.concurrent.TimeUnit
 
 /**
- * The hooks of threads, called the way instrumented JDK code calls them, in a JVM that traces for real: what comes out
- * is read back from the trace file. (The hooks of coroutines need kotlinx.coroutines instrumented, which takes the
- * agent itself: they are the integration tests'.) The JVM has a gate with a pace, so every scenario also checks that
- * each of its events passed the gate: one that did not is an ERROR in the trace.
+ * The hooks of threads, called the way instrumented JDK code calls them, in a JVM that traces for real: the result is
+ * read back from the trace file. The hooks of coroutines need kotlinx.coroutines instrumented, which takes the agent
+ * itself, so the integration tests cover them. The JVM has a gate with a pace, so every scenario also checks that
+ * each of its events passed the gate: one that didn't is an ERROR in the trace.
  */
 @Timeout(120)
 internal class HooksTest {
@@ -38,12 +38,12 @@ internal class HooksTest {
         var tid = 0L
         val recording = TracedJvm.record(name) {
             tid = Thread.currentThread().threadId()
-            // join waits with wait, which parks: one blocking call to whoever looks at the thread.
+            // join waits with wait, which parks: three nested enters, one reported blocking call.
             App.blocking(Wire.BLOCK_JOIN) { App.blocking(Wire.BLOCK_WAIT) { App.blocking(Wire.BLOCK_PARK, NOTHING) } }
             try {
                 App.blocking(Wire.BLOCK_SLEEP) { throw App.failure("interrupted, say") }
             } catch (leftByException: IllegalStateException) {
-                // the exit hook ran on the way out
+                // the exit hook ran on the exception path
             }
             depth = ThreadState.current().blockDepth
         }
@@ -53,7 +53,7 @@ internal class HooksTest {
         assertEquals(0, depth)
         assertEquals(emptyList<String>(), recording.errors())
 
-        // A thread whose start was not seen is defined when it is first seen, as what it is.
+        // A thread whose start wasn't seen is defined at its first event, by what it is then.
         assertEquals(NodeKind.THREAD, thread.kind)
         assertEquals(Origin.LIBRARY, thread.origin)
         assertEquals(tid, thread.thread!!.tid)
@@ -69,7 +69,7 @@ internal class HooksTest {
         assertTrue(blocked.stack.size <= TracedJvm.STACK_DEPTH)
 
         // All five are steps of one sequence, the thread's, in a JVM paced at one step a millisecond: each is at least
-        // that far from the one before, by the times in the trace, and the hold itself is nowhere but in held_nanos.
+        // that far from the one before by the trace's times. The hold itself appears only in heldNanos.
         for ((i, event) in events.withIndex()) {
             assertFalse(event.sameStep, "one hook call each")
             if (i > 0) {
@@ -94,7 +94,7 @@ internal class HooksTest {
                 ts.pushUnit(coroutine)
                 App.blocking(Wire.BLOCK_SLEEP) { App.blocking(Wire.BLOCK_PARK, NOTHING) }
                 ts.popUnit(coroutine)
-                App.blocking(Wire.BLOCK_PARK, NOTHING) // the event loop itself, waiting for the next piece of work: still runBlocking
+                App.blocking(Wire.BLOCK_PARK, NOTHING) // the event loop itself waits for work: still inside runBlocking, so not reported
             }
             depth = ts.blockDepth
         }
@@ -113,23 +113,23 @@ internal class HooksTest {
         val depths = CopyOnWriteArrayList<Int>()
         val recording = TracedJvm.record(name) {
             val ts = ThreadState.current()
-            // Reading a file is not blocking; the exit hook of read() cannot tell and comes all the same.
+            // A file read isn't reported as blocking, but the exit hook of read() runs all the same, so the enter counts for the depth.
             Hooks.blockEnterIfStdin(ByteArrayInputStream(ByteArray(0)))
             depths.add(ts.blockDepth)
-            App.blocking(Wire.BLOCK_PARK, NOTHING) // not the detail of an outer blocking call: there is none
+            App.blocking(Wire.BLOCK_PARK, NOTHING) // reported: the unreported file read isn't an outer blocking call
             Hooks.blockExit()
             depths.add(ts.blockDepth)
 
-            // An exit whose enter was before tracing was on (the agent activates in the middle of somebody's sleep).
+            // An exit whose enter came before tracing was on: the agent can activate in the middle of a sleep.
             Hooks.blockExit()
             depths.add(ts.blockDepth)
 
-            // Standard input blocks for as long as the user likes.
+            // Standard input is the one stream whose read is reported.
             Hooks.blockEnterIfStdin(FileInputStream(FileDescriptor.`in`))
             Hooks.blockExit()
             depths.add(ts.blockDepth)
 
-            // Something that is not a stream at all, null included: an enter is an enter.
+            // Not a stream, or null: still an enter for the depth.
             Hooks.blockEnterIfStdin(null)
             depths.add(ts.blockDepth)
             Hooks.blockExit()
@@ -149,7 +149,7 @@ internal class HooksTest {
             val ts = ThreadState.current()
             EventLoop.parkForWork { depths.add(ts.blockDepth) }
             depths.add(ts.blockDepth)
-            App.blocking(Wire.BLOCK_PARK, NOTHING) // the program's own park is one
+            App.blocking(Wire.BLOCK_PARK, NOTHING) // the program's own park is reported
         }
         assertEquals(listOf(1, 0), depths, "counted, though not reported")
         assertEquals(listOf("DISCOVERED", "THREAD_BLOCKED(PARK)", "THREAD_UNBLOCKED"), recording.story(recording.node(name).id))
@@ -170,7 +170,7 @@ internal class HooksTest {
         assertEquals(emptyList<String>(), fine.errors())
 
         val broken = TracedJvm.record(unbalanced) {
-            Hooks.blockEnter(Wire.BLOCK_SLEEP) // and no exit: what a hook that lost its way would leave behind
+            Hooks.blockEnter(Wire.BLOCK_SLEEP) // and no exit: what a hook bug leaves behind
             Hooks.threadExit(Thread.currentThread())
         }
         assertEquals(1, broken.errors().size, broken.errors().toString())
@@ -186,20 +186,20 @@ internal class HooksTest {
             gate.command("pause")
             try {
                 val thread = Thread({
-                    Thread.currentThread().interrupt() // the program's own flag, set before it ever reaches an event
+                    Thread.currentThread().interrupt() // the program's own flag, set before its first event
                     App.blocking(Wire.BLOCK_SLEEP, NOTHING)
                     flagAfterwards = Thread.interrupted()
                 }, name)
                 thread.isDaemon = true
                 thread.start()
 
-                awaitHeld(thread) // at its first event: being discovered
+                awaitHeld(thread) // at its first event: DISCOVERED
                 assertEquals(emptyList<String>(), inTheTraceSoFar(name), "nothing happens from a paused program")
 
                 gate.command("step 1")
                 val deadline = System.nanoTime() + 20_000_000_000L
                 while (inTheTraceSoFar(name).isEmpty() && System.nanoTime() < deadline) Thread.sleep(2)
-                awaitHeld(thread) // and at its second: about to block
+                awaitHeld(thread) // at its second: THREAD_BLOCKED
                 assertEquals(listOf("DISCOVERED"), inTheTraceSoFar(name), "one step went through, exactly")
 
                 gate.command("resume")
@@ -210,12 +210,12 @@ internal class HooksTest {
             }
         }
 
-        // Exactly what the thread did, as if nobody had stopped it: no state, no blocking, no interrupt of the agent's making.
+        // Exactly what the thread did, as if it had never been held: no state, no blocking and no interrupt of the agent's making.
         val thread = recording.node(name).id
         assertEquals(listOf("DISCOVERED", "THREAD_BLOCKED(SLEEP)", "THREAD_UNBLOCKED"), recording.story(thread))
         assertEquals(3, recording.events.size)
         assertEquals(true, flagAfterwards, "the flag was cleared for the wait and is back")
-        // What is recorded is the truth about time and about settings.
+        // The hold is recorded as time (heldNanos) and as settings (PaceDef).
         assertTrue(recording.of(thread).sumOf { it.heldNanos } > 0)
         val settings = recording.paces.map { (if (it.paused) "paused" else "running") + (if (it.steps > 0) " +${it.steps}" else "") }
         assertEquals(listOf("paused", "paused +1", "running"), settings.subList(0, 3))
@@ -226,14 +226,14 @@ internal class HooksTest {
 
     @Test
     fun aHookCalledFromInsideAHookSeesAndCountsNothing() {
-        // Hooks use the JDK and the JDK is instrumented; and the gate's own sleep comes by blockEnter and blockExit.
+        // Hooks call the JDK, which is instrumented, and the gate's own sleep passes blockEnter and blockExit.
         var depth = -1
         val recording = TracedJvm.record(name("in-hook")) {
             val ts = ThreadState.current()
             ts.inHook = true
             try {
                 App.blocking(Wire.BLOCK_SLEEP) { depth = ts.blockDepth }
-                Hooks.blockEnter(Wire.BLOCK_PARK) // an enter alone, as while the hold sleeps
+                Hooks.blockEnter(Wire.BLOCK_PARK) // an enter alone, as during the gate's sleep
                 if (depth == 0) depth = ts.blockDepth
                 App.catches(App.failure("inside"))
                 App.interrupt(Thread.currentThread())
@@ -263,7 +263,7 @@ internal class HooksTest {
             } finally {
                 Tracer.active = true
             }
-            Hooks.blockExit() // wakes up traced
+            Hooks.blockExit() // wakes up with tracing on
             depths.add(ts.blockDepth)
             App.blocking(Wire.BLOCK_SLEEP, NOTHING)
             depths.add(ts.blockDepth)
@@ -286,7 +286,7 @@ internal class HooksTest {
                 }
             }
             val starter = Thread({
-                // Neither its start nor an interrupt of it is anybody's event; and the thread that did both stays unseen.
+                // Neither its start nor an interrupt of it is an event, and the thread that did both gets no node.
                 App.start(agent)
                 App.interrupt(agent)
             }, name("starter-of-agent-thread"))
@@ -299,10 +299,10 @@ internal class HooksTest {
         assertEquals(emptyList<String>(), recording.errors())
     }
 
-    /** Whatever a hook is handed: it returns, it throws nothing, and it leaves the thread as it found it. */
+    /** Whatever a hook gets, it returns, throws nothing and leaves the thread's state as it was. */
     @Test
     fun aHookNeverThrowsIntoTheProgramWhateverItIsGiven() {
-        // Not Kotlin's and not kotlinx.coroutines' objects, where the hooks expect them; and null, which no JVM passes.
+        // Objects that aren't Kotlin's or kotlinx.coroutines', where the hooks expect those, and null, which no JVM passes.
         val stray = object {
             override fun toString(): String = throw IllegalStateException("toString of an application object")
         }
@@ -360,8 +360,8 @@ internal class HooksTest {
         }
         assertEquals(emptyList<String>(), problems)
 
-        // What could be said was said: the exception whose every method throws is still an exception that was caught
-        // and one the thread died of, by its class.
+        // The exception whose every method throws is still reported, by its class: caught once, then thrown and
+        // handled at the thread's death.
         val thread = recording.node(name).id
         val classes = recording.of(thread).mapNotNull { event ->
             event.exception?.let { "${event.kind} ${it.className} '${it.message}'" }
@@ -384,7 +384,7 @@ internal class HooksTest {
             val child = Thread({
                 App.blocking(Wire.BLOCK_SLEEP, NOTHING)
                 Hooks.threadExit(Thread.currentThread())
-                Hooks.threadExit(Thread.currentThread()) // however often the JVM comes by
+                Hooks.threadExit(Thread.currentThread()) // a second call changes nothing
             }, childName)
             child.isDaemon = false
             childTid = child.threadId()
@@ -419,7 +419,7 @@ internal class HooksTest {
         val lateName = name("interrupted-before-start")
         val recording = TracedJvm.record(starterName) {
             val late = Thread(NOTHING, lateName)
-            App.interrupt(late) // legal, and it sets the flag the thread starts with
+            App.interrupt(late) // legal before start
             App.start(late)
         }
 
@@ -449,7 +449,7 @@ internal class HooksTest {
             }
         }, bystanderName)
         bystander.isDaemon = true
-        bystander.start() // before tracing is on, and it calls no hook itself
+        bystander.start() // while tracing is off (record turns it on), and it calls no hook itself
         assertTrue(running.await(10, TimeUnit.SECONDS))
         try {
             val recording = TracedJvm.record(interrupterName) {
@@ -604,7 +604,7 @@ internal class HooksTest {
             }
         }
 
-        /** The kinds of the events of the thread of that name that are in the trace file by now. */
+        /** The kinds of the events of the thread with that name, as far as the trace file has them now. */
         private fun inTheTraceSoFar(threadName: String): List<String> {
             var id = 0L
             val kinds = ArrayList<String>()

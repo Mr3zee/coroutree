@@ -15,7 +15,7 @@ import kotlinx.coroutree.model.tree.NodeSnapshot
 import kotlinx.coroutree.model.tree.PaceSetting
 import kotlinx.coroutree.model.tree.TraceSnapshot
 
-/** [ticket] distinguishes repeated requests for the same target. */
+/** A request to bring [target] into view. [ticket] distinguishes two requests for the same target. */
 data class Reveal(val target: Long, val ticket: Int)
 
 data class GraphHighlight(

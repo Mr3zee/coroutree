@@ -37,7 +37,7 @@ gradlePlugin {
 }
 
 // What the plugin has to know about the build it came from: the version of the agent and GUI artifacts to resolve.
-val generatePluginProperties by tasks.registering(WriteProperties::class) {
+val generatePluginProperties = tasks.register<WriteProperties>("generatePluginProperties") {
     destinationFile = layout.buildDirectory.file("generated/pluginProperties/kotlinx/coroutree/gradle/plugin.properties")
     property("version", project.version.toString())
     property("group", project.group.toString())
@@ -48,9 +48,9 @@ sourceSets.main {
 }
 
 // A stand-in for the real agent: functional tests must not depend on coroutree-agent being buildable.
-val fakeAgent: SourceSet by sourceSets.creating
+val fakeAgent = sourceSets.create("fakeAgent")
 
-val fakeAgentJar by tasks.registering(Jar::class) {
+val fakeAgentJar = tasks.register<Jar>("fakeAgentJar") {
     archiveBaseName = "fake-agent"
     destinationDirectory = layout.buildDirectory.dir("fakeAgent")
     from(fakeAgent.output)
@@ -59,12 +59,12 @@ val fakeAgentJar by tasks.registering(Jar::class) {
     }
 }
 
-val functionalTest: SourceSet by sourceSets.creating
+val functionalTest = sourceSets.create("functionalTest")
 gradlePlugin.testSourceSets(functionalTest)
 
 // TestKit injects the plugin under test into a class loader that cannot see plugins resolved by the test build,
 // so the Kotlin Gradle plugin the tests apply has to come in the same way.
-val functionalTestPluginClasspath: Configuration by configurations.creating {
+val functionalTestPluginClasspath = configurations.create("functionalTestPluginClasspath") {
     isCanBeConsumed = false
 }
 

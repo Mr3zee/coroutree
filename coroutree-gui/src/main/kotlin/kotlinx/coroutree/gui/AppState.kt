@@ -15,10 +15,11 @@ import kotlinx.coroutree.gui.source.TraceSource
 import kotlinx.coroutree.gui.view.TraceViewModel
 import kotlinx.coroutree.model.StackFrameDef
 import kotlinx.coroutree.model.tree.TraceSnapshot
+import kotlinx.coroutree.model.tree.title
 
 /**
- * [catchUpTo] is the snapshot on screen when a reconnect replaced the feed. The new feed replays from the first byte,
- * so its snapshots are shown only once they have caught up: the graph never shrinks on the way.
+ * [catchUpTo] is the snapshot on screen when a reconnect replaced the feed. The new feed replays from the first byte.
+ * The view shows its snapshots only after they have caught up, so the graph never shrinks on the way.
  */
 class OpenTrace(val feed: TraceFeed, val viewModel: TraceViewModel = TraceViewModel(), private val catchUpTo: TraceSnapshot? = null) {
     /** Whether [snapshot], the feed's latest, replaces what the view shows. */
@@ -50,8 +51,8 @@ class AppState(
     }
 
     /**
-     * Replays the trace from the start with the current selection and viewport.
-     * Node ids remain valid for the JVM's lifetime.
+     * Attaches to the same JVM again, which replays the trace from the start.
+     * Node ids stay valid for the JVM's lifetime, so the selection and the viewport carry over.
      */
     fun reconnect() {
         val open = current ?: return
@@ -66,18 +67,28 @@ class AppState(
         scope.launch { closing.feed.close() }
     }
 
+    /** Opens [frame] in the IDE: its file and line when the source index has it, its class otherwise. */
     fun openInIde(frame: StackFrameDef) {
-        val location = current?.viewModel?.snapshot?.sources?.resolve(frame)
-        if (location == null) {
-            show("${frame.className} is not part of the project sources")
-            return
-        }
+        val snapshot = current?.viewModel?.snapshot ?: return
+        val location = snapshot.sources.resolve(frame)
+        // The top-level class: a lambda or an inner class has no file of its own.
+        val className = frame.className.substringBefore('$')
+        val target = location?.let { IdeOpener.Target.Source(it) } ?: IdeOpener.Target.Symbol(className, snapshot.header?.projectDir ?: "")
+        val what = location?.let { if (it.line > 0) "${it.path}:${it.line}" else it.path } ?: className
         scope.launch {
-            when (val outcome = ideOpener.open(location)) {
-                is IdeOpener.Outcome.Opened -> show("Opened ${location.path}:${location.line} in the IDE")
+            when (val outcome = ideOpener.open(target)) {
+                is IdeOpener.Outcome.Opened -> show("Opened $what in ${outcome.where}")
                 is IdeOpener.Outcome.Failed -> show(outcome.message)
             }
         }
+    }
+
+    /** Opens the source site of a node, or reports that the trace has none for it. */
+    fun openNodeInIde(nodeId: Long) {
+        val snapshot = current?.viewModel?.snapshot ?: return
+        val node = snapshot.node(nodeId) ?: return
+        val site = snapshot.frame(node.info.siteFrame)
+        if (site == null) show("${node.title} has no source location in the trace") else openInIde(site)
     }
 
     fun show(text: String) {

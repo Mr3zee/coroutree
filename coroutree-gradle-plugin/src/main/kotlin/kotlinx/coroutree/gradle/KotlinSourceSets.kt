@@ -7,7 +7,8 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetContainer
 import org.jetbrains.kotlin.gradle.plugin.KotlinTargetsContainer
 
 /**
- * Load only after a Kotlin plugin is applied. Other classes must not reference Kotlin Gradle plugin types, even in signatures.
+ * The only class that refers to Kotlin Gradle plugin types, so it loads only after a Kotlin plugin is applied. No
+ * other class refers to those types, not even in a signature.
  */
 internal object KotlinSourceSets {
     fun forEachJvmSourceSet(project: Project, action: (name: String, directories: FileCollection) -> Unit) {

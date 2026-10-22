@@ -5,7 +5,7 @@ It supports live and recorded traces. Static code analysis is out of scope.
 
 M1 (runtime tracing), M1.1 (the graph) and M1.2 (execution control) are implemented.
 The standalone desktop GUI is in progress. M2 to M6 aren't started (§9).
-Items marked **[assumed]** lack explicit confirmation. The implementation follows those assumptions where applicable.
+Items marked **[assumed]** lack the owner's confirmation. The implementation follows them.
 
 ## 1. Decisions at a glance
 
@@ -112,7 +112,7 @@ Capture remains independent of GUI speed.
 
 The innermost setting along a node's structural ancestry governs it. Otherwise, the global setting applies.
 A node's first command copies its governing setting, then changes that copy independently until `inherit` removes it.
-Thus, global pause followed by `resume 42` runs that subtree alone.
+So a global pause followed by `resume 42` runs that subtree alone.
 
 A step uses the settings of its execution unit and every node it emits on.
 It takes the largest interval among unpaused settings and needs a permit from every paused setting.
@@ -150,7 +150,7 @@ The wait remembers interrupts and restores the flag before return. It never thro
 
 If a hook emits nothing, it returns its slots and permits to their original counter objects.
 Pause and resume replace those objects, so a late return can't reopen a paused scope.
-Hold time carries to the thread's next event, preserving exact per-thread totals.
+Hold time carries to the thread's next event, so per-thread totals stay exact.
 
 **Safety requirements**
 
@@ -230,7 +230,12 @@ Runtime `awaits` / `joins` links and the gaps in §12 also have no assigned mile
 The GUI opens recorded traces and finds live JVMs through the session registry.
 The graph, details pane and event log share selection.
 When an event refers to two nodes, the GUI highlights both nodes and their connecting edges.
-Captured stacks and source sites open in the IDE through IntelliJ's localhost endpoint or a configured command template.
+Captured stacks and source sites open in a running JetBrains IDE or through a configured command template.
+The GUI finds running IDEs through their processes and the `product-info.json` of their installations, and runs the
+IDE's own launcher, which hands the arguments to the running instance. The IDE that has the project open wins.
+A frame in the source index opens at its line. Any other frame opens as its top-level class through the IDE's
+`jetbrains://` navigate command, which needs the traced project open in that IDE. A click on a box selects it.
+A double click opens its source. A click without a running IDE, a file or a site produces a note that says why.
 
 Live, paceable sessions have pause, resume, step and a logarithmic speed slider, from one event in ten seconds to unlimited.
 Space toggles pause, and → steps. Subtree controls appear in the context menu and details pane.
@@ -258,7 +263,7 @@ The scrubber will inspect history independently of execution controls, including
   Above 3000 boxes, changes appear immediately.
 
 The engine uses a tidy-tree layout and orthogonal routing. Geometry is deterministic and has no Compose dependencies.
-§12 records the constraints required to preserve separation.
+§12 lists the constraints that keep the invariant.
 
 ### 6.2 Drawing invariant (strict)
 
@@ -287,8 +292,10 @@ Configuration precedence, highest first:
 2. `-Pcoroutree` and `-Pcoroutree.*` override the DSL.
 3. DSL values override defaults.
 
-Resolve properties at argument generation through provider chains. The DSL overrides extension conventions, so conventions can’t enforce CLI precedence.
+Properties resolve at argument generation through provider chains. A DSL value replaces an extension convention, so a convention can't enforce CLI precedence.
 Combined-setting checks use resolved values and must survive configuration-cache reuse.
+A traced run is never up to date: the build id is an input of the forked task. An `upToDateWhen` spec can't do that,
+because it gives a task without outputs, such as a plain `JavaExec`, an up-to-date check it never had.
 Invalid values fail the build with the property name, except that `-Pcoroutree` treats anything other than `false` as enabled.
 Properties also follow Gradle's precedence for `gradle.properties` and environment sources.
 
@@ -310,7 +317,7 @@ The [repository guide](onboarding/index.html#code-map) has a task-based source b
 | M1 | Done | Runtime tracing, source navigation, live and recorded input, jobless coroutines and inline source maps |
 | M1.1 | Done | Graph, layout invariant, navigation and linked selection |
 | M1.2 | Done | Global and subtree execution control |
-| Standalone desktop GUI | In progress | Standalone GUI workflow |
+| Standalone desktop GUI | In progress | Session registry, start screen, live follow and reconnect |
 
 Remaining milestones, in priority order:
 
@@ -409,24 +416,37 @@ The labels toggle defaults to on. `TreeRenderer` remains the golden text format.
 
 ### The standalone GUI as built: sessions
 
-- The session registry is `~/.coroutree/sessions`, one descriptor per traced JVM, the same directory for every build
-  of the user. It replaced `build/coroutree/sessions/<buildId>`: the GUI is standalone and lists what runs anywhere.
-  The agent's `sessions.dir` option and the DSL's `sessionsDirectory` move it; empty, the agent writes no descriptor.
-  Test JVMs always set it.
-- A descriptor is written once the live server listens, also without one (`live=false`, or `liveFailed` when the
-  socket could not be opened), and rewritten with `ended` on orderly shutdown.
-- The GUI polls the directory. A descriptor without `ended` is believed only as far as the JVM exists (pid, and its
-  start time within a minute of the agent's) and its socket answers: `RUNNING`; `UNREACHABLE` while the socket doesn't
-  answer (shutdown closes it before the descriptor is rewritten); `CRASHED` when the process is gone. Ended, crashed
-  and unreachable runs are offered as recorded traces while their file exists.
-- The GUI prunes on entering the session list: runs whose trace is gone, and all but the newest 50 of the rest.
-  A JVM that exists is never pruned.
-- A session that isn't over and can't be connected to is read from its file and shown as `partial`.
-- Disconnect hangs up and keeps what was seen; to the agent it is one controller fewer. Reconnect replays the trace
-  from its first byte into a new feed; the view keeps selection and viewport, and shows the new feed only once it has
-  caught up with what was on screen.
+The session registry is `~/.coroutree/sessions`: one descriptor for each traced JVM, in one directory for every build
+of the user. The agent's `sessions.dir` option and the DSL's `sessionsDirectory` move it. An empty value writes no
+descriptor. Test JVMs always set it.
 
-### Future work without a milestone
+The GUI is a plain JVM process. `bin/coroutree-gui` rebuilds the host's self-contained jar (`:coroutree-gui:uberJar`) and runs it on
+the user's JDK, with no project. `coroutreeView` is a convenience for a project that applies the plugin.
+There is no native distribution.
+
+The agent writes the descriptor when the live server listens, or at once with `live=false`, or with `liveFailed` when
+the socket couldn't open. On orderly shutdown it rewrites the descriptor with `ended`.
+
+The GUI polls the directory and derives a state from each descriptor:
+
+| State | Condition |
+|---|---|
+| `ENDED` | The descriptor has `ended` |
+| `CRASHED` | No process has the pid, or its start time is more than a minute from the agent's |
+| `RUNNING` | The process exists and the socket answers, or the descriptor has no socket |
+| `UNREACHABLE` | The process exists and the socket doesn't answer. Shutdown closes the socket before it rewrites the descriptor |
+
+Ended, crashed and unreachable runs open as recorded traces while their file exists. A session that isn't over and
+can't be connected opens from its file as `partial`.
+
+When the session list opens, the GUI prunes runs whose trace file is gone and all but the newest 50 of the rest. It
+never prunes a JVM that exists.
+
+Disconnect keeps what was seen. To the agent it is one controller fewer. Reconnect replays the trace from its first
+byte into a new feed. The view keeps selection and viewport and shows the new feed once it has caught up with the
+screen.
+
+### Known gaps
 
 - Jobless coroutines started with `startCoroutineUninterceptedOrReturn` and their own completion can remain unseen.
   The function is inline, so it has no single hook point.
@@ -443,8 +463,12 @@ The labels toggle defaults to on. `TreeRenderer` remains the golden text format.
 - Recorded files are read once. Follow a running JVM through the live socket.
 - The plugin reads the root project's build directory from each project, which prevents project isolation.
 - Dependency source indexes use conventional runtime-classpath names. A custom KMP target such as `jvm("desktop")` lacks dependency sources.
-- Windows source paths, launcher quoting and `idea.cmd` are untested.
+- Windows source paths and launcher paths from `product-info.json` are untested.
+- IntelliJ's built-in server has no `/api/file` endpoint any more (it moved to the IDE Remote Control plugin), so the
+  GUI doesn't use it. An IDE that the process scan can't see (another user, a container) needs `ideCommand`.
+- Open projects come from the IDE's `recentProjects.xml`, which the IDE writes when a project opens or closes. An
+  IDE that didn't exit cleanly can list a project as open that isn't.
 - Nothing is published publicly. `publishAllPublicationsToLocalRepository` writes artifacts to `build/repo`.
 - Subtree pace has no exact numeric input. Its slider has two significant digits.
 - Subtree step controls need an explanation that cross-subtree events require permits from every governing paused setting.
-- Runtime warning badges remain in §5. An incremental layout engine is unassigned if support for 10⁵ nodes becomes necessary.
+- An incremental layout engine has no milestone. It becomes necessary at 10⁵ nodes.

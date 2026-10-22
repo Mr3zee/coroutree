@@ -2,6 +2,9 @@ package kotlinx.coroutree.gui.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.border
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -20,6 +23,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -33,7 +37,11 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -157,6 +165,36 @@ fun Modifier.rowBackground(selected: Boolean, related: Boolean = false): Modifie
 }
 
 fun Modifier.handCursor(): Modifier = pointerHoverIcon(PointerIcon.Hand)
+
+/**
+ * Primary-button clicks, with the position in the element. [onClick] runs at once on every click. [onDoubleClick]
+ * runs as well on the second of two clicks within the double-click time, so a double click selects first and
+ * opens second, and a single click never waits. A drag is no click.
+ */
+fun Modifier.clicks(key: Any?, onClick: (Offset) -> Unit, onDoubleClick: (Offset) -> Unit): Modifier = composed {
+    val click by rememberUpdatedState(onClick)
+    val doubleClick by rememberUpdatedState(onDoubleClick)
+    pointerInput(key) {
+        // The last click that can still become the first of a double click.
+        var previous: PointerInputChange? = null
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            if (down.type == PointerType.Mouse && !currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
+            val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+            up.consume()
+            click(up.position)
+            val first = previous
+            val second = first != null && up.uptimeMillis - first.uptimeMillis <= viewConfiguration.doubleTapTimeoutMillis &&
+                (up.position - first.position).getDistance() <= viewConfiguration.touchSlop
+            if (second) {
+                previous = null
+                doubleClick(up.position)
+            } else {
+                previous = up
+            }
+        }
+    }
+}
 
 /** Scrolls only when the item is not already fully in view, so clicking around does not make the list jump. */
 suspend fun LazyListState.revealItem(index: Int) {

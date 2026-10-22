@@ -21,13 +21,13 @@ class CorpusTest {
         val events = snapshots.flatMap { it.events }
         val nodes = snapshots.flatMap { it.nodes.values }
 
-        // The agent reports child-to-parent failure as EXCEPTION_PROPAGATED.
+        // A child's failure reaches its parent as EXCEPTION_PROPAGATED, never as CANCELLATION_PROPAGATED child to parent.
         assertEquals(EventKind.entries.toSet() - EventKind.UNSPECIFIED, events.map { it.kind }.toSet())
-        // LiveStreamTest covers IO. MONITOR needs the native probe for the build platform.
+        // LiveStreamTest covers IO. MONITOR needs the native probe, which a build has for its own platform only.
         val unreported = setOfNotNull(BlockReason.UNSPECIFIED, BlockReason.IO, BlockReason.MONITOR.takeIf { MonitorProbeLibrary.file == null })
         assertEquals(BlockReason.entries.toSet() - unreported, events.map { it.blockReason }.toSet() - BlockReason.UNSPECIFIED)
         assertEquals(HandledBy.entries.toSet() - HandledBy.UNSPECIFIED, events.map { it.handledBy }.toSet() - HandledBy.UNSPECIFIED)
-        // M3 adds executor TASK nodes. M6 adds StructuredTaskScope TASK nodes.
+        // TASK nodes come with M3 (executors) and M6 (StructuredTaskScope).
         assertEquals(NodeKind.entries.toSet() - setOf(NodeKind.UNSPECIFIED, NodeKind.TASK), nodes.map { it.info.kind }.toSet())
         assertTrue(nodes.map { it.state }.toSet().containsAll(setOf(NodeState.ACTIVE, NodeState.COMPLETED, NodeState.FAILED, NodeState.CANCELLED)))
         assertEquals(CrossLink.Kind.entries.toSet(), nodes.flatMap { it.links }.map { it.kind }.toSet())

@@ -34,7 +34,7 @@ class SessionDiscoveryTest {
 
     private val ownPid = ProcessHandle.current().pid()
 
-    /** A pid that no process has: the largest the platform allows, or near it. */
+    /** A pid that no process has: the first free one from 4,000,000 up, above what the platforms give out. */
     private val nobodysPid = generateSequence(4_000_000L) { it + 1 }.first { ProcessHandle.of(it).isEmpty }
 
     private fun session(pid: Long, startedAt: Long, port: Int, ended: Boolean = false, trace: String = "traces/$pid.ctrace") =
@@ -54,7 +54,7 @@ class SessionDiscoveryTest {
         assertEquals(SessionInfo(null, pid = 7, port = 4000, token = "x", traceFile = null, taskPath = "", buildId = "", command = "", startedAt = 0, ended = false, paceable = false), old)
         val new = SessionInfo.parse("""{"pid":7,"port":4000,"token":"x","protocol":3,"host":"localhost","tls":false,"traceFile":"/t/x.ctrace","ended":true,"paceable":true}""")
         assertEquals(old.copy(traceFile = File("/t/x.ctrace"), ended = true, paceable = true), new)
-        // Keys of the wrong type are as good as missing; they do not take the listing down.
+        // Keys of the wrong type count as missing. They don't take the listing down.
         val odd = SessionInfo.parse("""{"pid":"7","port":null,"token":12,"traceFile":false,"ended":"true","paceable":1,"startedAt":1.0e3}""")
         assertEquals(SessionInfo(null, 0, 0, "", null, "", "", "", startedAt = 1000, ended = false, paceable = false), odd)
         assertFalse(odd.live, "no port: a run without a socket")
@@ -106,7 +106,7 @@ class SessionDiscoveryTest {
 
     // ------------------------------------------------------------------ running, ended, crashed
 
-    /** "A crashed JVM leaves a session file that still says 'running'; only a connection tells." */
+    /** A crashed JVM leaves its descriptor without an end marker. Only the process and its socket tell. */
     @Test
     fun aSessionRunsIfItsJvmIsAliveAndItsSocketAnswers() {
         val probes = LinkedBlockingQueue<Int>()
@@ -119,7 +119,7 @@ class SessionDiscoveryTest {
             val now = System.currentTimeMillis()
             write("alive.json", session(ownPid, now, server.localPort))
             write("gone.json", session(nobodysPid, now - 1, server.localPort)) // the port answers, but it is somebody else's now
-            write("hung-up.json", session(ownPid, now - 2, deadPort())) // the JVM lives, the agent's socket is closed: shutting down, or worse
+            write("hung-up.json", session(ownPid, now - 2, deadPort())) // the JVM is alive, the agent's socket is closed: shutting down, or worse
             write("ended.json", session(ownPid, now - 3, server.localPort, ended = true))
             write("silent.json", session(ownPid, now - 4, 0)) // started with live=false: running, nothing to connect to
 

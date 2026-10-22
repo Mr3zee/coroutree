@@ -9,7 +9,9 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.v2.runComposeUiTest
 import kotlinx.coroutree.gui.source.FeedStatus
 import kotlinx.coroutree.gui.ui.CoroutreeTheme
 import kotlinx.coroutree.gui.ui.TraceScreen
@@ -26,11 +28,12 @@ class TraceScreenUiTest {
     private val snapshot = demoSnapshot()
     private val viewModel = TraceViewModel().also { it.snapshot = snapshot }
     private val opened = mutableListOf<StackFrameDef>()
+    private val openedNodes = mutableListOf<Long>()
 
     private fun test(block: ComposeUiTest.() -> Unit) = runComposeUiTest {
         setContent {
             CoroutreeTheme(dark = false) {
-                TraceScreen(viewModel, "demo", FeedStatus.RECORDED, failure = null, onOpenFrame = { opened += it }, onClose = {})
+                TraceScreen(viewModel, "demo", FeedStatus.RECORDED, failure = null, onOpenFrame = { opened += it }, onOpenNode = { openedNodes += it }, onClose = {})
             }
         }
         block()
@@ -46,6 +49,18 @@ class TraceScreenUiTest {
 
         onNodeWithTag("site").performClick()
         assertEquals(listOf("Checkout.kt" to 73), opened.map { it.fileName to it.line })
+    }
+
+    /** README: "Click a frame or a source site: open it in the IDE", frames outside the project too. */
+    @Test
+    fun everyFrameOfAnEventIsALinkToTheIde() = test {
+        val event = snapshot.events.first { e -> e.stack.any { !snapshot.sources.isKnown(snapshot.frame(it)!!) } }
+        val library = event.stack.first { !snapshot.sources.isKnown(snapshot.frame(it)!!) }
+        onNodeWithTag("event-${event.seq}").performClick()
+        waitForIdle()
+        onNodeWithTag("details").performScrollToNode(hasTestTag("frame-$library"))
+        onNodeWithTag("frame-$library").performClick()
+        assertEquals(listOf(snapshot.frame(library)), opened)
     }
 
     @Test

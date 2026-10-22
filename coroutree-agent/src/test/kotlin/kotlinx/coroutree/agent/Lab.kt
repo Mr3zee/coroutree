@@ -9,10 +9,10 @@ import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Modifier
 
 /**
- * Where rewritten classes are tried out: a throwaway class loader that defines the bytes it is given under their own
- * names — the JVM verifies them like any class of an application, against stack map frames nobody recomputed — next
- * to a `kotlinx.coroutree.runtime.Hooks` of its own, which has every hook of the real one and does nothing but
- * write the call down in [HookLog].
+ * A throwaway class loader for rewritten classes. It defines the bytes it is given under their own names. Next to
+ * them it defines a `kotlinx.coroutree.runtime.Hooks` of its own, which has every hook of the real one and only
+ * records the call in [HookLog]. The JVM verifies the classes against the stack map frames the transformer left,
+ * which nobody recomputed.
  */
 internal object Lab {
     const val HOOKS = "kotlinx.coroutree.runtime.Hooks"
@@ -30,7 +30,7 @@ internal object Lab {
         return (stream ?: throw AssertionError("no class file of $internalName")).use { it.readAllBytes() }
     }
 
-    /** Calls the public method of that name (the only one) on `target`, or statically on a class. */
+    /** Calls the one public method named `method` on `target`, or statically when `target` is a class. */
     fun call(target: Any, method: String, vararg arguments: Any?): Outcome {
         val type = target as? Class<*> ?: target.javaClass
         val candidates = type.methods.filter { it.name == method }
@@ -98,13 +98,12 @@ internal object Lab {
             }
         }
 
-        /** The class, linked and initialised: a class the verifier rejects fails here. */
+        /** The class, linked and initialized. A class that the verifier rejects fails here. */
         fun verified(name: String): Class<*> = Class.forName(name, true, this)
 
         fun verified(original: Class<*>): Class<*> = verified(original.name)
     }
 
-    /** The outcome of a call: what it returned, or what it threw. */
     class Outcome(val value: Any?, val thrown: Throwable?) {
         override fun toString(): String =
             if (thrown != null) "threw ${thrown.javaClass.name}: ${thrown.message}" else "returned $value"

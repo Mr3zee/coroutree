@@ -15,10 +15,8 @@ import org.objectweb.asm.tree.MethodNode
 import java.util.TreeMap
 
 /**
- * Which inline functions the code at a line was inlined through, read off the marker variables the Kotlin compiler
- * leaves for debuggers: `$i$f$name` spans the inlined body of `name`, `$i$a$-name-…` an inlined
- * lambda that was passed to `name`. The methods here are written out instruction by instruction, in the layout
- * the compiler uses: the call's line, the marker set under it, then the span.
+ * [InlinedCalls] read off the marker variables that the Kotlin compiler leaves for debuggers. The methods here are
+ * written instruction by instruction in the layout the compiler uses: the call's line, then the marker's span under it.
  */
 internal class InlinedCallsTest {
     /** One method, as lines, instructions and spans of marker variables. */
@@ -35,7 +33,7 @@ internal class InlinedCallsTest {
             return this
         }
 
-        /** One more instruction of the line in force. */
+        /** Adds one more instruction on the current line. */
         fun more(): Code {
             method.instructions.add(InsnNode(Opcodes.NOP))
             return this
@@ -65,7 +63,7 @@ internal class InlinedCallsTest {
 
     @Test
     fun codeInlinedThroughSeveralFunctionsNamesThemInnermostFirstEachWithTheLineOfItsCall() {
-        // main calls retry at 18; retry's copy (36..38) calls withLock at 37; withLock's copy is 53..54.
+        // The copy of retry (36..38) is called at 18, and the copy of withLock (53..54) at 37.
         val main = Code("main").line(18).open(RETRY).line(36).line(37).open(WITH_LOCK).line(53).line(54).close(WITH_LOCK).line(38).close(RETRY).line(19)
         assertEquals(
             mapOf(36 to "retry@18", 37 to "retry@18", 38 to "retry@18", 53 to "withLock@37 < retry@18", 54 to "withLock@37 < retry@18"),
@@ -75,11 +73,11 @@ internal class InlinedCallsTest {
 
     @Test
     fun aLambdaBelongsToWhoeverPassedItNotToTheFunctionItWasInlinedInto() {
-        // main passes a lambda (its own line 15) to retry: the lambda's code runs inside retry's copy and is main's.
+        // main passes a lambda (its own line 15) to retry: the lambda's code is inside the copy of retry but is main's.
         val main = Code("main").line(14).open(RETRY).line(36).open(LAMBDA_OF_RETRY).line(15).close(LAMBDA_OF_RETRY).line(37).close(RETRY)
         assertEquals(mapOf(36 to "retry@14", 37 to "retry@14"), inlined(classOf(main)))
 
-        // The same inside outer's copy: the lambda was written in outer (line 61 of its copy), so it is outer's code.
+        // The same inside the copy of outer: the lambda was written in outer (line 61 of its copy), so it is outer's code.
         val nested = Code("main").line(14).open(OUTER).line(60).open(RETRY).line(36).open(LAMBDA_OF_RETRY).line(61)
             .close(LAMBDA_OF_RETRY).close(RETRY).close(OUTER)
         assertEquals(mapOf(60 to "outer@14", 36 to "retry@60 < outer@14", 61 to "outer@14"), inlined(classOf(nested)))
@@ -97,19 +95,19 @@ internal class InlinedCallsTest {
 
     @Test
     fun theDeepestInstructionOfALineSaysWhereTheLineIs() {
-        // Instructions of line 53 on either side of the span that is withLock's body, before it and after it.
+        // Line 53 also has instructions outside the span of withLock, before it and after it.
         val main = Code("main").line(18).open(RETRY).line(36).line(53).line(36).open(WITH_LOCK).line(53).close(WITH_LOCK).line(53).close(RETRY)
         assertEquals("withLock@36 < retry@18", inlined(classOf(main))[53])
     }
 
     @Test
     fun aSpanThatBeginsAgainAfterASuspensionPointIsTheSameCall() {
-        // A suspending method is a state machine: after a suspension point the markers of the spans that are still open
-        // are set anew, under the method's first line (5), and the spans begin again.
+        // A suspending method is a state machine. After a suspension point the compiler sets the markers of the open
+        // spans again, under the method's first line (5), and the spans start again.
         val suspending = Code("invokeSuspend").line(5).line(18).open(RETRY).line(36).close(RETRY).line(5).open(RETRY).line(37).close(RETRY)
         assertEquals(mapOf(36 to "retry@18", 37 to "retry@18"), inlined(classOf(suspending)))
 
-        // A call that really is on the method's first line is called from there.
+        // A span that starts on the method's first line without an earlier span of the same marker is called from that line.
         val first = Code("run").line(5).open(RETRY).line(36).close(RETRY)
         assertEquals(mapOf(36 to "retry@5"), inlined(classOf(first)))
     }
@@ -123,9 +121,11 @@ internal class InlinedCallsTest {
     }
 
     /**
-     * The whole way: a class file with a source map and marker variables goes through the transformer, and a stack
-     * frame in it comes out as TRACE_FORMAT ("Inlined code") says: the body, named; in project classes one frame for
-     * every inline function that one was inlined through, at the line of the call; last the call site.
+     * End to end: the transformer reads a class file with a source map and marker variables, and a stack frame in it
+     * comes out as TRACE_FORMAT.md ("Inlined code") states:
+     * - the innermost inlined body, named
+     * - in a project class, one frame for each inline function the body was inlined through, at the line of its call
+     * - last, the call site
      */
     @Test
     fun aFrameInAProjectClassNamesEveryInlineFunctionItIsInAndInALibraryClassTheInnermostBodyOnly() {
@@ -140,7 +140,7 @@ internal class InlinedCallsTest {
             node.sourceDebug = smap.replace("%s", "$pkg/MainKt")
             val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
             node.accept(writer)
-            // Neither class is changed: there is nothing to hook in them and no catch block. They are only read.
+            // Neither class is changed: nothing to hook, no catch block. The transformer only reads them.
             assertNull(transformer.transform(javaClass.classLoader, node.name, null, null, writer.toByteArray()))
         }
         assertEquals(
@@ -155,7 +155,8 @@ internal class InlinedCallsTest {
             listOf("inline com.acme.util.UtilKt.retry(Util.kt:25)", "com.acme.project.MainKt.main(Main.kt:18)"),
             RuntimeProbe.logicalFrames("com.acme.project.MainKt", "main", "Main.kt", 38)
         )
-        // A class outside the project's packages is not read beyond its source map.
+        // Of a class outside the project's packages the transformer reads only the source map. So the inline function
+        // has no name, and the function it was inlined through gets no frame.
         assertEquals(
             listOf("inline kotlinx.coroutines.sync.MutexKt.(Mutex.kt:118)", "com.acme.library.MainKt.main(Main.kt:18)"),
             RuntimeProbe.logicalFrames("com.acme.library.MainKt", "main", "Main.kt", 53)

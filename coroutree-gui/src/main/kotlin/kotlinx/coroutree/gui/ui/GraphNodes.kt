@@ -65,7 +65,7 @@ import kotlin.math.roundToInt
  * them, so panning and zooming move a layer instead of laying anything out again. During a glide only placement runs.
  */
 @Composable
-fun GraphNodes(viewModel: TraceViewModel, state: GraphViewState, boxes: List<NodeBox>, hover: HoverCardState) {
+fun GraphNodes(viewModel: TraceViewModel, state: GraphViewState, boxes: List<NodeBox>, hover: HoverCardState, onOpenNode: (Long) -> Unit) {
     val snapshot = viewModel.snapshot
     val highlight = viewModel.highlight
     Layout(
@@ -80,6 +80,7 @@ fun GraphNodes(viewModel: TraceViewModel, state: GraphViewState, boxes: List<Nod
                         related = box.id in highlight.nodes,
                         pace = viewModel.ownPace(box.id),
                         onSelect = { viewModel.selectNode(box.id) },
+                        onOpen = { onOpenNode(box.id) },
                         hover = hover,
                         modifier = Modifier.graphicsLayer { alpha = state.alpha(box.id) },
                     )
@@ -112,9 +113,10 @@ fun GraphNodes(viewModel: TraceViewModel, state: GraphViewState, boxes: List<Nod
 /**
  * A node of the graph: kind icon and title, and under them the state in a word. The box is coloured by the state
  * and by nothing else. Everything longer (site, context, thread) is in the hover card and the details pane.
+ * A click selects the node, a double click opens its source.
  */
 @Composable
-private fun NodeView(node: NodeSnapshot, dimmed: Boolean, selected: Boolean, related: Boolean, pace: PaceSetting?, onSelect: () -> Unit, hover: HoverCardState, modifier: Modifier) {
+private fun NodeView(node: NodeSnapshot, dimmed: Boolean, selected: Boolean, related: Boolean, pace: PaceSetting?, onSelect: () -> Unit, onOpen: () -> Unit, hover: HoverCardState, modifier: Modifier) {
     val color = palette.of(node.state)
     val shape = RoundedCornerShape(6.dp)
     val interaction = remember { MutableInteractionSource() }
@@ -144,7 +146,7 @@ private fun NodeView(node: NodeSnapshot, dimmed: Boolean, selected: Boolean, rel
                 },
             )
             .hoverable(interaction)
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onSelect)
+            .clicks(node.id, onClick = { onSelect() }, onDoubleClick = { onOpen() })
             .testTag("node-${node.id}")
             .semantics {
                 this.selected = selected
@@ -204,7 +206,7 @@ class HoverCardState(private val scope: CoroutineScope) {
     }
 }
 
-/** The tooltip of a node: what does not fit in its box, and the way to its source. */
+/** The tooltip of a node: what does not fit in its box, and the way to its source. The site is a link to the IDE. */
 @Composable
 fun HoverCard(viewModel: TraceViewModel, state: GraphViewState, hover: HoverCardState, onOpenSite: (Long) -> Unit) {
     val id = hover.nodeId ?: return
@@ -245,11 +247,12 @@ fun HoverCard(viewModel: TraceViewModel, state: GraphViewState, hover: HoverCard
         Label(node.graphTitle, style = Type.code.copy(fontWeight = FontWeight.Medium))
         Label("${Formatting.enumLabel(node.info.kind)} · ${node.state.label}", style = Type.small, color = palette.textDim)
         snapshot.frame(node.info.siteFrame)?.let { site ->
-            val openable = snapshot.sources.isKnown(site)
+            // In project code the link goes to the line. Elsewhere it goes to the class, in a quieter colour.
+            val project = snapshot.sources.isKnown(site)
             Label(
-                (if (openable) "↗ " else "") + site.shortLocation.ifEmpty { site.className },
-                (if (openable) Modifier.handCursor().clickable { onOpenSite(id) } else Modifier).testTag("card-site"),
-                Type.codeSmall, if (openable) palette.accent else palette.textDim,
+                "↗ " + site.shortLocation.ifEmpty { site.className },
+                Modifier.handCursor().clickable { onOpenSite(id) }.testTag("card-site"),
+                Type.codeSmall, if (project) palette.accent else palette.textDim,
             )
         }
         // The name is in the title already; the dispatcher is what people look for first.

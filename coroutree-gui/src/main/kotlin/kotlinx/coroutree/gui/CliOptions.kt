@@ -2,13 +2,13 @@ package kotlinx.coroutree.gui
 
 import java.io.File
 
-/** What the command line asked for. Anything not given stays `null`; with nothing given the session list opens. */
+/** What the command line asked for. Anything not given stays `null`. With nothing given, the session list opens. */
 data class CliOptions(
     val trace: File? = null,
     val session: File? = null,
-    /** Where the agents publish their sessions; `null` for the shared default, `~/.coroutree/sessions`. */
+    /** Where the agents publish their sessions. `null` means the shared default, `~/.coroutree/sessions`. */
     val sessionsDir: File? = null,
-    /** Command template with `{path}` and `{line}`; replaces the built-in ways of reaching the IDE. */
+    /** Command template with `{path}` and `{line}`. It replaces the launcher of a running JetBrains IDE. */
     val ideCommand: String? = null,
     val demo: DemoMode? = null,
 ) {
@@ -23,6 +23,7 @@ data class CliOptions(
               --session <file.json>   attach to a live session, or open its trace file when the session is over
               --sessions <dir>        the directory where the agents publish their sessions (default: ~/.coroutree/sessions)
               --ide <command>         the command that opens a file in the IDE. {path} and {line} are replaced.
+                                      Default: the launcher of a running JetBrains IDE.
               --demo[=live]           show a synthetic trace (=live streams it slowly)
         """.trimIndent()
 

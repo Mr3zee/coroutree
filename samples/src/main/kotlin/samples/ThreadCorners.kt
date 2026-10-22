@@ -15,7 +15,7 @@ fun main() {
     val lock = ReentrantLock()
     val condition = lock.newCondition()
     val latch = CountDownLatch(1)
-    val monitor = Object()
+    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN") val monitor = Object() // Any has no wait()
 
     lock.lock()
     val locker = thread(name = "locker") { lock.lock(); lock.unlock() }

@@ -31,7 +31,7 @@ public abstract class CoroutreeSourceIndexTask : DefaultTask() {
     @get:Input
     public abstract val projectPath: Property<String>
 
-    /** Absolute project directory included in the index. Source lookup requires access to this directory. */
+    /** Absolute, and part of the output: a trace is opened on the machine that recorded it. */
     @get:Input
     public abstract val projectDirectory: Property<String>
 
@@ -44,7 +44,7 @@ public abstract class CoroutreeSourceIndexTask : DefaultTask() {
     protected val sourceFiles: FileTree
         get() = (mainSourceDirectories + testSourceDirectories).asFileTree.matching { it.include("**/*.kt", "**/*.java") }
 
-    /** Directory order affects record precedence but isn't part of [sourceFiles]. */
+    /** The order of the records. [sourceFiles] doesn't capture it. */
     @get:Input
     protected val sourceDirectoryOrder: List<String>
         get() {

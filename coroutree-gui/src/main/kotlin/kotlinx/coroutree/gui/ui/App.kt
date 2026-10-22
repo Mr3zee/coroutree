@@ -50,7 +50,7 @@ private fun OpenTraceScreen(open: OpenTrace, state: AppState) {
     LaunchedEffect(status) { open.viewModel.commands = if (status == FeedStatus.LIVE) open.feed::send else null }
     val session = open.feed.source is TraceSource.Session
     TraceScreen(
-        open.viewModel, open.feed.source.title, status, failure, state::openInIde,
+        open.viewModel, open.feed.source.title, status, failure, state::openInIde, state::openNodeInIde,
         onClose = state::close,
         onDisconnect = if (session && status == FeedStatus.LIVE) state::disconnect else null,
         onReconnect = if (session && status == FeedStatus.DISCONNECTED) state::reconnect else null,

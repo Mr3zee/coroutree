@@ -22,8 +22,8 @@ inline fun twice(action: (Int) -> Unit) {
 suspend inline fun pauseBriefly() {
     delay(10)
 }
-
-inline fun failing(message: String): Nothing = throw IllegalStateException(message)
+// Inline without a lambda on purpose: the throw gets an inlined frame of another file.
+@Suppress("NOTHING_TO_INLINE") inline fun failing(message: String): Nothing = throw IllegalStateException(message)
 
 /** A member, and one that calls another inline function of this file. */
 class Labeller(val prefix: String) {

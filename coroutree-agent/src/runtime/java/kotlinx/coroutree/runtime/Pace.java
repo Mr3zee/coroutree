@@ -438,8 +438,8 @@ final class Pace {
         return def;
     }
 
-    // Command parsing must not load classes whose initializers can be held at the gate.
-    // Parse without regex and warm up before tracing starts.
+    // A control reader must never load a class for the first time: its static initializer can be running on a held
+    // thread. So no regex here, and warmUp runs the parser before tracing starts.
 
     private static String[] words(String line) {
         ArrayList<String> words = new ArrayList<>(4);

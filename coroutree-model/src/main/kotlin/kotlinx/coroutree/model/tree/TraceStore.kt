@@ -50,7 +50,8 @@ public class TraceStore {
     private val nodes = HashMap<Long, MutableNode>()
     private val roots = AppendLog<Long>()
 
-    // Placeholders can gain a parent after definition. The append-only root log needs a separate removal set.
+    // A placeholder starts as a root and moves under its parent when it is defined. The root log can't remove, so
+    // snapshot() filters these ids out.
     private val formerRoots = HashSet<Long>()
     private val events = AppendLog<Event>()
     private val frames = AppendLog<StackFrameDef?>().apply { add(null) } // frame ids start at 1
@@ -60,7 +61,8 @@ public class TraceStore {
     private val paceChanges = AppendLog<PaceDef>()
     private var pace = PaceState.NONE
 
-    // Concurrent threads can write events out of order. Dense sequence numbers identify missing predecessors.
+    // Frames of concurrent threads reach the file slightly out of order. Sequence numbers are dense, so an event
+    // waits here until its predecessors have arrived.
     private val pending = TreeMap<Long, Event>()
     private var nextSeq = 1L
 

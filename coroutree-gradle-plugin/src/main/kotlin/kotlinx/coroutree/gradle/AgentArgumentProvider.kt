@@ -21,11 +21,21 @@ import java.util.Properties
 import java.util.zip.ZipFile
 
 /**
- * Disabled tracing must leave task inputs unchanged. Agent files and [settings] are empty while disabled.
+ * Adds `-javaagent:<agent>=config=<file>` to a forking task and writes that file and the merged source index right
+ * before the JVM starts. While tracing is off, [agentClasspath], [sourceIndexParts] and [settings] are empty, so the
+ * plugin changes no task input.
  */
 internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
     @get:Input
     abstract val enabled: Property<Boolean>
+
+    /**
+     * The build id while tracing is on, else empty. A run with the agent exists for its trace, so each invocation is
+     * new work. An `upToDateWhen` spec can't do that: it gives a task without outputs, such as a plain `JavaExec`,
+     * an up-to-date check it never had.
+     */
+    @get:Input
+    abstract val runId: Property<String>
 
     @get:Classpath
     abstract val agentClasspath: ConfigurableFileCollection
@@ -73,7 +83,7 @@ internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
     @get:Internal
     abstract val taskPath: Property<String>
 
-    /** Absent: the agent's default, the user's registry. */
+    /** Unset: the agent's default, `~/.coroutree/sessions`. */
     @get:Internal
     abstract val sessionsDirectory: Property<String>
 
@@ -89,8 +99,8 @@ internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
     abstract val workDirectory: Property<String>
 
     /**
-     * Projects can load the plugin in separate class loaders but share one service instance.
-     * The common Gradle interface avoids casts across those loaders.
+     * The [BuildIdService], typed loosely: projects can load this plugin in different class loaders, and the first
+     * of them registers the service, so to the others its class is a different class of the same name.
      */
     @get:Internal
     abstract val buildIdService: Property<BuildService<*>>
@@ -145,15 +155,16 @@ internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
         return listOfNotNull(
             monitorProbe(agentJar, workDir)?.let { "-agentpath:${it.absolutePath}" },
             "-javaagent:${agentJar.absolutePath}=config=${configFile.absolutePath}",
-            // Appending the runtime to the bootstrap classpath disables application class sharing.
-            // Disable it at startup to suppress the JVM warning.
+            // The bootstrap append disables the JVM's class-data sharing for application classes, with a warning on
+            // every start. Off from the start, there is no warning.
             "-Xshare:off",
         )
     }
 
     /**
-     * Uses -agentpath to avoid the native-access warning from System.load.
-     * The forked JVM must use Gradle's host platform. The macOS probe supports both x64 and arm64.
+     * Unpacks this machine's monitor probe from the agent jar, or returns `null` when the jar has none for it.
+     * `-agentpath` avoids the native-access warning that `System.load` gets on JDK 24 and later. The forked JVM is
+     * assumed to run on Gradle's platform. Nothing checks it. The macOS probe is a universal binary.
      */
     private fun monitorProbe(agentJar: File, workDir: File): File? {
         val entryName = HostPlatform.monitorProbeEntry() ?: return null
@@ -172,8 +183,8 @@ internal abstract class AgentArgumentProvider : CommandLineArgumentProvider {
     }
 
     /**
-     * Concurrent test forks can read these files while another fork rewrites them.
-     * Atomic replacement prevents partial reads.
+     * A `Test` task forks several JVMs at a time, so one worker's agent can read these files while the next fork's
+     * arguments rewrite them. A file moved into place is always whole.
      */
     private fun writeAtomically(file: File, write: (OutputStream) -> Unit) {
         val temp = File.createTempFile(file.name, ".tmp", file.parentFile)
