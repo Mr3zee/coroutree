@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -23,11 +22,9 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.rightClick
 import androidx.compose.ui.test.v2.runComposeUiTest
-import androidx.compose.ui.test.withKeyDown
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutree.gui.demo.DemoTrace
 import kotlinx.coroutree.gui.graph.assertInvariant
@@ -195,7 +192,7 @@ class GraphPaneUiTest {
     }
 
     @Test
-    fun draggingTheBackgroundAndScrollingPanTheCanvas() = test {
+    fun draggingTheBackgroundPansTheCanvas() = test {
         val before = view.viewport
         onNodeWithTag("graph").performMouseInput {
             moveTo(Offset(10f, 10f))
@@ -208,28 +205,20 @@ class GraphPaneUiTest {
         assertEquals(before.zoom, view.viewport.zoom)
         assertTrue(view.viewport.panX > before.panX + 100 && view.viewport.panY > before.panY + 50, "${view.viewport}")
         assertNull(viewModel.selectedNodeId, "a drag is not a click")
-
-        val dragged = view.viewport
-        onNodeWithTag("graph").performMouseInput { scroll(2f) }
-        waitForIdle()
-        assertTrue(view.viewport.panY < dragged.panY && view.viewport.panX == dragged.panX && view.viewport.zoom == dragged.zoom)
         for (box in viewModel.layout.boxesIn(view.viewport.visibleWorld(view.width, view.height))) {
             if (view.isInView(box.id)) assertDrawnWhereTheLayoutSays(box.id)
         }
     }
 
+    /** README: "Scroll, or pinch on a macOS trackpad: zoom around the pointer". No key is held: a scroll never pans. */
     @Test
-    fun scrollingWithCtrlZoomsAroundThePointer() = test {
+    fun scrollingZoomsAroundThePointer() = test {
         val main = snapshot.named("main")
         val pointer = onCanvas(main.id)
         val before = view.viewport
-        onNodeWithTag("graph").performKeyInput {
-            withKeyDown(Key.CtrlLeft) {
-                this@test.onNodeWithTag("graph").performMouseInput {
-                    moveTo(pointer)
-                    scroll(-3f)
-                }
-            }
+        onNodeWithTag("graph").performMouseInput {
+            moveTo(pointer)
+            scroll(-3f)
         }
         waitForIdle()
         assertTrue(view.viewport.zoom > before.zoom * 1.15f, "${view.viewport}")
@@ -241,17 +230,12 @@ class GraphPaneUiTest {
     @Test
     fun aWheelEventZoomsByABoundedStep() = test {
         val before = view.viewport.zoom
-        var flicked = 0f
-        onNodeWithTag("graph").performKeyInput {
-            withKeyDown(Key.MetaLeft) {
-                this@test.onNodeWithTag("graph").performMouseInput {
-                    moveTo(Offset(300f, 200f))
-                    scroll(-40f)
-                }
-                flicked = view.viewport.zoom / before
-                this@test.onNodeWithTag("graph").performMouseInput { scroll(-2f) }
-            }
+        onNodeWithTag("graph").performMouseInput {
+            moveTo(Offset(300f, 200f))
+            scroll(-40f)
         }
+        val flicked = view.viewport.zoom / before
+        onNodeWithTag("graph").performMouseInput { scroll(-2f) }
         waitForIdle()
         val stepped = view.viewport.zoom / before / flicked
         assertEquals(flicked, stepped, 0.001f)

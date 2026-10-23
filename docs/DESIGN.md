@@ -290,11 +290,13 @@ The scrubber will inspect history independently of execution controls, including
   Selecting a hidden node through the log or details enables the *library / pools* toggle.
 - The graph supports no per-node collapse or same-site aggregation. Use pan, zoom, Fit, Selection and the minimap for navigation.
   The minimap appears when the graph exceeds the pane. Zoom ranges from fit to 3×.
-  Ctrl/⌘ + wheel and the macOS trackpad pinch zoom around the pointer. One wheel event zooms by at most two units,
-  because a trackpad flick reports tens of units in one event. AWT reports the pinch only through `com.apple.eawt.event`,
+  The wheel, with or without a key held, and the macOS trackpad pinch zoom around the pointer; only the drag and the
+  minimap pan. One wheel event zooms by at most two units, because a trackpad flick reports tens of units in one event.
+  AWT reports the pinch only through `com.apple.eawt.event`,
   which `java.desktop` does not export: the GUI reaches it by reflection, and every launcher adds the export
   (`Add-Exports` in the uber jar's manifest, `--add-exports` for `run` and `hotRun`). Without it, and on other
-  platforms, there is no pinch.
+  platforms, there is no pinch. The two fingers of a pinch can also tap, which macOS reports as a right click: a pinch
+  update closes the context menu and keeps it shut for 400 ms.
 - Only visible geometry is drawn. Below 35% zoom or above 700 visible boxes, the canvas replaces box composables.
 - Changed layouts animate for 320 ms and anchor the selected node, or the node nearest the viewport center.
   Until manual navigation, the viewport fits the whole graph. Fit restores that mode.

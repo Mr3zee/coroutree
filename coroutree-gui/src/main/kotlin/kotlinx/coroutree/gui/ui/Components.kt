@@ -49,6 +49,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutree.model.NodeKind
 import kotlinx.coroutree.model.NodeState
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** Single-line text in the theme's colours; everything in the tool windows is one line per fact. */
 @Composable
@@ -76,9 +79,17 @@ fun KindIcon(kind: NodeKind, modifier: Modifier = Modifier, color: Color = palet
         when (kind) {
             NodeKind.THREAD -> for (x in listOf(0.25f, 0.5f, 0.75f)) line(x, 0.12f, x, 0.88f)
             NodeKind.COROUTINE -> {
-                drawArc(color, startAngle = -20f, sweepAngle = 290f, useCenter = false, topLeft = Offset(s * 0.15f, s * 0.15f), size = Size(s * 0.7f, s * 0.7f), style = stroke)
-                line(0.85f, 0.4f, 0.85f, 0.08f)
-                line(0.85f, 0.4f, 0.55f, 0.36f)
+                // An open loop, clockwise, with the arrowhead on the end of the arc pointing into the gap.
+                val r = 0.34f
+                val end = 235.0
+                drawArc(color, startAngle = (end - 290).toFloat(), sweepAngle = 290f, useCenter = false, topLeft = Offset(s * (0.5f - r), s * (0.5f - r)), size = Size(s * 2 * r, s * 2 * r), style = stroke)
+                val t = Math.toRadians(end)
+                val tipX = 0.5f + r * cos(t).toFloat()
+                val tipY = 0.5f + r * sin(t).toFloat()
+                for (barb in listOf(-35.0, 35.0)) {
+                    val a = t - PI / 2 + Math.toRadians(barb)
+                    line(tipX, tipY, tipX + 0.2f * cos(a).toFloat(), tipY + 0.2f * sin(a).toFloat())
+                }
             }
             NodeKind.SCOPE -> {
                 drawRoundRect(color, Offset(s * 0.1f, s * 0.14f), Size(s * 0.8f, s * 0.72f), CornerRadius(s * 0.18f), stroke)

@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
+import androidx.compose.foundation.ContextMenuState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -31,8 +32,6 @@ import androidx.compose.ui.awt.LocalAwtWindow
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.isCtrlPressed
-import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -54,14 +53,15 @@ private const val MAX_DETAILED_BOXES = 700
 /** Boxes this far outside the pane are composed already, so that panning does not reveal holes. */
 private const val CULL_MARGIN = 160
 
-private const val SCROLL_STEP = 48f
-
 /**
- * Zoom for one unit of Ctrl/⌘ + wheel. A mouse notch is one unit. A trackpad reports its movement in tenths of a pixel
- * and sends tens of units in one event when it is flicked, so an event counts at most [WHEEL_ZOOM_CLAMP] units.
+ * Zoom for one unit of the wheel. A mouse notch is one unit. A trackpad reports its movement in tenths of a pixel and
+ * sends tens of units in one event when it is flicked, so an event counts at most [WHEEL_ZOOM_CLAMP] units.
  */
 private const val WHEEL_ZOOM_RATE = 0.1f
 private const val WHEEL_ZOOM_CLAMP = 2f
+
+/** The context menu stays shut this long after a pinch update: the two fingers of a pinch also tap, and a tap is a right click. */
+private const val PINCH_MENU_GUARD_NANOS = 400_000_000L
 
 /**
  * The concurrency tree as a graph (DESIGN §6.1): toolbar and legend on top, below them the canvas with the edges, the
@@ -96,13 +96,18 @@ fun GraphPane(viewModel: TraceViewModel, onOpenNode: (Long) -> Unit, modifier: M
 
     var pointer by remember { mutableStateOf(Offset.Zero) }
     var pointerInside by remember { mutableStateOf(false) }
+    val menu = remember { ContextMenuState() }
+    var menuShutUntilNanos by remember { mutableStateOf(System.nanoTime()) }
 
     // A pinch comes from AWT with no position and for the whole window: it zooms where the pointer was last seen,
-    // and only while that is over the canvas.
+    // and only while that is over the canvas. Its two fingers can also register as a two-finger tap, which macOS
+    // reports as a right click, so a pinch shuts the context menu and keeps it shut for a moment.
     val window = LocalAwtWindow.current as? RootPaneContainer
     DisposableEffect(window, state) {
         val uninstall = window?.let { w ->
             MacTrackpad.onMagnify(w.rootPane) { magnification ->
+                menuShutUntilNanos = System.nanoTime() + PINCH_MENU_GUARD_NANOS
+                menu.status = ContextMenuState.Status.Closed
                 if (!pointerInside) return@onMagnify
                 hover.dismiss()
                 state.zoom(1 + magnification.toFloat(), pointer.x / density, pointer.y / density)
@@ -115,7 +120,8 @@ fun GraphPane(viewModel: TraceViewModel, onOpenNode: (Long) -> Unit, modifier: M
         PaneHeader("Concurrency tree") { GraphToolbar(viewModel, state) }
         GraphLegend(viewModel)
         Divider()
-        ContextMenuArea(items = {
+        ContextMenuArea(state = menu, items = {
+            if (System.nanoTime() < menuShutUntilNanos) return@ContextMenuArea emptyList()
             val id = state.nodeAt(pointer.x / density, pointer.y / density) ?: return@ContextMenuArea emptyList()
             listOf(
                 ContextMenuItem("Open in IDE") { onOpenNode(id) },
@@ -141,13 +147,9 @@ fun GraphPane(viewModel: TraceViewModel, onOpenNode: (Long) -> Unit, modifier: M
                                 }
                                 if (event.type != PointerEventType.Scroll) continue
                                 hover.dismiss()
-                                val delta = change.scrollDelta
-                                if (event.keyboardModifiers.isCtrlPressed || event.keyboardModifiers.isMetaPressed) {
-                                    val units = delta.y.coerceIn(-WHEEL_ZOOM_CLAMP, WHEEL_ZOOM_CLAMP)
-                                    state.zoom(exp(-units * WHEEL_ZOOM_RATE), change.position.x / density, change.position.y / density)
-                                } else {
-                                    state.pan(-delta.x * SCROLL_STEP, -delta.y * SCROLL_STEP)
-                                }
+                                // The wheel and the two-finger scroll zoom; panning is the drag and the minimap.
+                                val units = change.scrollDelta.y.coerceIn(-WHEEL_ZOOM_CLAMP, WHEEL_ZOOM_CLAMP)
+                                state.zoom(exp(-units * WHEEL_ZOOM_RATE), change.position.x / density, change.position.y / density)
                                 change.consume()
                             }
                         }
